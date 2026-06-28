@@ -28,6 +28,10 @@ export default function AdminDashboard({ admin }: AdminDashboardProps) {
   const [selectedSchedule, setSelectedSchedule] = useState<WeeklySchedule | null>(null);
   const [showHistoryForMatch, setShowHistoryForMatch] = useState<string | null>(null);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [editUserData, setEditUserData] = useState({ name: '', email: '', phone: '', role: 'PARENT' as const });
+  const [editingUserError, setEditingUserError] = useState('');
+  const [savingUser, setSavingUser] = useState(false);
   const [userSearchTerm, setUserSearchTerm] = useState('');
   const [streamSearchTerm, setStreamSearchTerm] = useState('');
   const [openMatchMenu, setOpenMatchMenu] = useState<string | null>(null);
@@ -51,6 +55,38 @@ export default function AdminDashboard({ admin }: AdminDashboardProps) {
       setConfirmAction(null);
     } catch (error) {
        console.error("Error unmatching: ", error);
+    }
+  };
+
+  const openEditUser = (user: User) => {
+    setEditingUser(user);
+    setEditUserData({ name: user.name, email: user.email, phone: user.phone || '', role: user.role });
+    setEditingUserError('');
+  };
+
+  const handleSaveUser = async () => {
+    if (!editingUser) return;
+    if (!editUserData.name.trim() || !editUserData.email.trim()) {
+      setEditingUserError('Name and email are required');
+      return;
+    }
+
+    setSavingUser(true);
+    setEditingUserError('');
+    try {
+      await updateDoc(doc(db, 'users', editingUser.id), {
+        name: editUserData.name,
+        email: editUserData.email,
+        phone: editUserData.phone,
+        role: editUserData.role
+      });
+      setSelectedUser({ ...editingUser, ...editUserData });
+      setEditingUser(null);
+    } catch (err: any) {
+      console.error(err);
+      setEditingUserError(err.message || 'Failed to update user');
+    } finally {
+      setSavingUser(false);
     }
   };
 
@@ -301,8 +337,7 @@ export default function AdminDashboard({ admin }: AdminDashboardProps) {
                       <h3 className="text-base font-bold text-text-main tracking-tight">{u.name}</h3>
                       <p className="text-xs text-text-sub truncate">{u.email}</p>
                     </div>
-                    <div className="pt-4 border-t border-border-theme flex items-center justify-between">
-                      <span className="text-[10px] font-bold text-text-sub uppercase">ID: {u.id.slice(0, 8)}</span>
+                    <div className="pt-4 border-t border-border-theme flex items-center justify-end">
                       <button className="text-[10px] font-bold text-primary uppercase hover:underline">View Profile</button>
                     </div>
                   </div>
@@ -321,18 +356,25 @@ export default function AdminDashboard({ admin }: AdminDashboardProps) {
                 <ChevronRight className="w-4 h-4 rotate-180" /> Back to Users
               </button>
               
-              <div className="bg-white border text-left border-border-theme rounded-2xl p-6 mb-8 shadow-sm flex items-start gap-6">
-                 <div className={`w-16 h-16 rounded-2xl flex items-center justify-center text-white font-extrabold text-2xl shadow-sm ${selectedUser.role === 'ADMIN' ? 'bg-error' : selectedUser.role === 'PARENT' ? 'bg-primary' : 'bg-success'}`}>
-                    {selectedUser.name?.[0]}
-                 </div>
-                 <div>
-                    <h2 className="text-2xl font-black text-text-main tracking-tight mb-1">{selectedUser.name}</h2>
-                    <p className="text-sm text-text-sub font-medium">{selectedUser.email}</p>
-                    <div className="mt-4 flex gap-3">
-                       <span className="px-2 py-1 rounded text-[10px] font-bold bg-surface border border-border-theme text-text-sub uppercase tracking-widest">{selectedUser.role}</span>
-                       <span className="px-2 py-1 rounded text-[10px] font-bold bg-surface border border-border-theme text-text-sub uppercase tracking-widest">ID: {selectedUser.id}</span>
+              <div className="bg-white border text-left border-border-theme rounded-2xl p-6 mb-8 shadow-sm flex items-start justify-between gap-6">
+                 <div className="flex items-start gap-6">
+                    <div className={`w-16 h-16 rounded-2xl flex items-center justify-center text-white font-extrabold text-2xl shadow-sm ${selectedUser.role === 'ADMIN' ? 'bg-error' : selectedUser.role === 'PARENT' ? 'bg-primary' : 'bg-success'}`}>
+                       {selectedUser.name?.[0]}
+                    </div>
+                    <div>
+                       <h2 className="text-2xl font-black text-text-main tracking-tight mb-1">{selectedUser.name}</h2>
+                       <p className="text-sm text-text-sub font-medium">{selectedUser.email}</p>
+                       <div className="mt-4 flex gap-3">
+                          <span className="px-2 py-1 rounded text-[10px] font-bold bg-surface border border-border-theme text-text-sub uppercase tracking-widest">{selectedUser.role}</span>
+                       </div>
                     </div>
                  </div>
+                 <button
+                    onClick={() => openEditUser(selectedUser)}
+                    className="px-4 py-2 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary/90 transition-colors whitespace-nowrap"
+                 >
+                    Edit User
+                 </button>
               </div>
 
               {selectedUser.role !== 'ADMIN' && (
@@ -603,6 +645,86 @@ export default function AdminDashboard({ admin }: AdminDashboardProps) {
                   </div>
                 )}
               </div>
+            </motion.div>
+          </div>
+        )}
+        {editingUser && (
+          <div className="fixed inset-0 bg-text-main/20 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-xl w-full max-w-sm overflow-hidden shadow-2xl border border-border-theme"
+            >
+              <div className="p-4 border-b border-border-theme flex items-center justify-between bg-surface">
+                 <h3 className="font-bold text-text-main tracking-tight uppercase">Edit User</h3>
+                 <button onClick={() => setEditingUser(null)} className="p-2 hover:bg-white rounded-lg transition-colors">
+                   <X className="w-4 h-4" />
+                 </button>
+              </div>
+
+              <form onSubmit={(e) => { e.preventDefault(); handleSaveUser(); }} className="p-5 space-y-4">
+                {editingUserError && (
+                   <div className="p-3 bg-error/10 text-error text-xs font-bold rounded-lg uppercase tracking-tight">
+                      {editingUserError}
+                   </div>
+                )}
+
+                <div>
+                   <label className="block text-[10px] font-bold text-text-sub uppercase tracking-widest mb-1.5 ml-1">Name</label>
+                   <input
+                     type="text"
+                     value={editUserData.name}
+                     onChange={e => setEditUserData({ ...editUserData, name: e.target.value })}
+                     className="w-full border border-border-theme bg-surface rounded-lg px-3 py-2 text-sm outline-none focus:border-primary font-bold transition-all"
+                     required
+                   />
+                </div>
+
+                <div>
+                   <label className="block text-[10px] font-bold text-text-sub uppercase tracking-widest mb-1.5 ml-1">Email</label>
+                   <input
+                     type="email"
+                     value={editUserData.email}
+                     onChange={e => setEditUserData({ ...editUserData, email: e.target.value })}
+                     className="w-full border border-border-theme bg-surface rounded-lg px-3 py-2 text-sm outline-none focus:border-primary font-bold transition-all"
+                     required
+                   />
+                </div>
+
+                <div>
+                   <label className="block text-[10px] font-bold text-text-sub uppercase tracking-widest mb-1.5 ml-1">Phone</label>
+                   <input
+                     type="tel"
+                     value={editUserData.phone}
+                     onChange={e => setEditUserData({ ...editUserData, phone: e.target.value })}
+                     className="w-full border border-border-theme bg-surface rounded-lg px-3 py-2 text-sm outline-none focus:border-primary font-bold transition-all"
+                   />
+                </div>
+
+                <div>
+                   <label className="block text-[10px] font-bold text-text-sub uppercase tracking-widest mb-1.5 ml-1">Account Type</label>
+                   <select
+                     value={editUserData.role}
+                     onChange={e => setEditUserData({ ...editUserData, role: e.target.value as any })}
+                     className="w-full border border-border-theme bg-surface rounded-lg px-3 py-2 text-sm outline-none focus:border-primary font-bold transition-all appearance-none"
+                   >
+                     <option value="PARENT">Parent</option>
+                     <option value="NANNY">Nanny</option>
+                     <option value="ADMIN">Admin</option>
+                   </select>
+                </div>
+
+                <div className="pt-4">
+                   <button
+                     type="submit"
+                     disabled={savingUser}
+                     className="w-full py-3 bg-primary text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-primary/90 transition-all shadow-lg active:scale-[0.98] disabled:opacity-50"
+                   >
+                     {savingUser ? 'Saving...' : 'Save User'}
+                   </button>
+                </div>
+              </form>
             </motion.div>
           </div>
         )}

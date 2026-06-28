@@ -233,9 +233,9 @@ export default function Auth() {
   return (
     <div className="min-h-screen bg-white flex flex-col items-center justify-center p-4 md:p-8">
       <div className="w-full max-w-sm relative">
-        <button 
+        <button
            onClick={() => { setSelectedRole(null); setError(null); }}
-           className="absolute -top-16 left-0 text-[10px] font-bold uppercase tracking-widest text-text-sub hover:text-text-main flex items-center gap-1.5 transition-colors"
+           className="absolute top-12 -left-[70px] px-3 py-2 bg-primary text-white rounded-lg text-[10px] font-bold uppercase tracking-widest flex items-center gap-1.5 transition-colors hover:bg-primary/90 shadow-sm"
         >
            <ArrowLeft className="w-3 h-3" /> Change Role
         </button>
@@ -272,7 +272,7 @@ export default function Auth() {
                 className="p-4 mb-6 bg-success/5 border border-success/20 text-success rounded-xl text-[11px] font-bold uppercase tracking-tight flex items-center gap-3"
               >
                 <div className="w-6 h-6 rounded-full bg-success/10 flex items-center justify-center shrink-0">✓</div>
-                Password reset email sent. Please check your inbox.
+                Password reset email sent. Please check your inbox. Also check your spam/junk folder.
               </motion.div>
             )}
           </AnimatePresence>

@@ -26,20 +26,50 @@ export default function ScheduleCard({ schedule, user, match, onRefresh, onNavig
   const [explanation, setExplanation] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const normalizeWeekStart = (dateValue: any): string => {
+    let date: Date;
+
+    if (typeof dateValue === 'string') {
+      // Handle "YYYY-MM-DD" format
+      const [y, m, d] = dateValue.split('-');
+      date = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+    } else if (dateValue instanceof Date) {
+      date = new Date(dateValue);
+    } else if (dateValue && typeof dateValue.toDate === 'function') {
+      // Handle Firestore Timestamp
+      date = new Date(dateValue.toDate());
+    } else {
+      return String(dateValue);
+    }
+
+    // Normalize to Monday
+    const dayOfWeek = date.getDay();
+    const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    date.setDate(date.getDate() - daysToSubtract);
+
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const [localWeek, setLocalWeek] = useState(() => {
-    if (schedule.weekStartDate && String(schedule.weekStartDate).toLowerCase() !== 'undefined') {
-       return schedule.weekStartDate as string;
+    if (schedule?.weekStartDate) {
+       return normalizeWeekStart(schedule.weekStartDate);
     }
     const d = new Date();
-    d.setDate(d.getDate() - (d.getDay() === 0 ? 6 : d.getDay() - 1));
-    return d.toISOString().split('T')[0];
+    d.setDate(d.getDate() - ((d.getDay() === 0 ? 7 : d.getDay()) - 1));
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   });
 
   useEffect(() => {
-    if (schedule.weekStartDate && String(schedule.weekStartDate).toLowerCase() !== 'undefined') {
-       setLocalWeek(schedule.weekStartDate as string);
+    if (schedule?.weekStartDate) {
+       setLocalWeek(normalizeWeekStart(schedule.weekStartDate));
     }
-  }, [schedule.weekStartDate]);
+  }, [schedule?.weekStartDate]);
 
   const handleNavigateWeek = (e: React.MouseEvent, dir: 'prev' | 'next') => {
       e.stopPropagation();
@@ -47,6 +77,7 @@ export default function ScheduleCard({ schedule, user, match, onRefresh, onNavig
       const date = new Date(parseInt(y), parseInt(m)-1, parseInt(d));
       date.setDate(date.getDate() + (dir === 'next' ? 7 : -7));
       const nextWeekStr = date.toISOString().split('T')[0];
+      setLocalWeek(nextWeekStr);
       if (onNavigateWeek) onNavigateWeek(dir, nextWeekStr);
   };
 
@@ -173,8 +204,14 @@ export default function ScheduleCard({ schedule, user, match, onRefresh, onNavig
                 {(() => {
                   try {
                     const [y, m, d] = String(localWeek).split('-');
-                    const startDate = new Date(parseInt(y), parseInt(m)-1, parseInt(d));
+                    let startDate = new Date(parseInt(y), parseInt(m)-1, parseInt(d));
                     if (isNaN(startDate.getTime())) return localWeek;
+
+                    // Ensure week starts on Monday
+                    const dayOfWeek = startDate.getDay();
+                    const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+                    startDate.setDate(startDate.getDate() - daysToSubtract);
+
                     const endDate = new Date(startDate);
                     endDate.setDate(startDate.getDate() + 6);
                     return `${startDate.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} to ${endDate.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
@@ -238,7 +275,7 @@ export default function ScheduleCard({ schedule, user, match, onRefresh, onNavig
             <div className="bg-surface rounded-xl border border-border-theme overflow-hidden">
               {editedShifts.length === 0 ? (
                 <div className="px-6 py-12 text-center text-text-sub italic text-sm">
-                  No shifts recorded yet.
+                  No work hours scheduled yet.
                 </div>
               ) : (
                 <>
@@ -283,7 +320,7 @@ export default function ScheduleCard({ schedule, user, match, onRefresh, onNavig
             <>
               {shifts.length === 0 ? (
                 <div className="p-12 text-center text-text-sub italic text-sm bg-surface rounded-xl border border-border-theme">
-                  No shifts recorded for this schedule.
+                  No work hours scheduled for this week.
                 </div>
               ) : (
                 <VisualCalendar shifts={shifts} scheduleStatus={schedule.status} weekStartDate={localWeek} />
@@ -353,7 +390,7 @@ export default function ScheduleCard({ schedule, user, match, onRefresh, onNavig
                       </button>
                     </>
                   ) : (
-                    <span className="text-[10px] font-bold text-text-sub italic bg-surface px-4 py-2 rounded-lg uppercase tracking-wider border border-border-theme">Awaiting Other Party...</span>
+                    <span className="text-[10px] font-bold text-text-sub italic bg-surface px-4 py-2 rounded-lg uppercase tracking-wider border border-border-theme">Awaiting Parent...</span>
                   )
                 )}
 

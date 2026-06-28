@@ -158,12 +158,20 @@ export default function ParentDashboard({ parent }: ParentDashboardProps) {
                         <p className="text-[10px] text-text-sub uppercase tracking-tight font-bold">Nanny</p>
                       </div>
                     </div>
-                    <div className="pt-4 border-t border-border-theme flex items-center justify-between">
-                      <div className="flex flex-col">
-                        <span className="text-[9px] font-bold text-text-sub uppercase tracking-widest">Connected Since</span>
-                        <span className="text-[11px] font-bold text-text-main uppercase">
-                          {m.createdAt?.seconds ? new Date(m.createdAt.seconds * 1000).toLocaleDateString() : 'Active'}
-                        </span>
+                    <div className="pt-4 border-t border-border-theme space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex flex-col">
+                          <span className="text-[9px] font-bold text-text-sub uppercase tracking-widest">Connected Since</span>
+                          <span className="text-[11px] font-bold text-text-main uppercase">
+                            {m.createdAt?.seconds ? new Date(m.createdAt.seconds * 1000).toLocaleDateString() : 'Active'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="pt-2 border-t border-border-theme/50">
+                        <span className="text-[9px] font-bold text-text-sub uppercase tracking-widest block mb-1">Phone</span>
+                        <a href={`tel:${nannies[m.nannyId]?.phone}`} className="text-[11px] font-bold text-primary hover:underline">
+                          {nannies[m.nannyId]?.phone || 'Not provided'}
+                        </a>
                       </div>
                     </div>
                   </div>
@@ -211,7 +219,7 @@ export default function ParentDashboard({ parent }: ParentDashboardProps) {
                <h4 className="text-lg font-bold mb-4 leading-tight">Questions about billing or need help?</h4>
                <div className="flex flex-col sm:flex-row gap-3">
                   <a href="tel:847-213-9336" className="inline-flex items-center justify-center gap-2 text-xs font-bold bg-white text-primary px-5 py-2.5 rounded-lg hover:bg-surface transition-all active:scale-95 shadow-sm">
-                     Reach out to admin: 847-213-9336
+                     Reach out to MomSub: 847-213-9336
                   </a>
                </div>
             </div>

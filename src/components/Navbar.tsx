@@ -24,8 +24,6 @@ export default function Navbar({ user }: NavbarProps) {
   const [editRole, setEditRole] = useState<UserRole>(user.role);
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileError, setProfileError] = useState('');
-  const [newAdminCode, setNewAdminCode] = useState('');
-  const [showCodeRotation, setShowCodeRotation] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -267,6 +265,13 @@ export default function Navbar({ user }: NavbarProps) {
                 </div>
 
                 <div>
+                   <label className="block text-[10px] font-bold text-text-sub uppercase tracking-widest mb-1.5 ml-1">Account Type</label>
+                   <div className="w-full bg-surface rounded-lg px-3 py-2 text-sm font-bold text-text-main border border-border-theme">
+                     {editRole}
+                   </div>
+                </div>
+
+                <div>
                    <label className="block text-[10px] font-bold text-text-sub uppercase tracking-widest mb-1.5 ml-1">Email</label>
                    <input
                      type="email"
@@ -287,61 +292,6 @@ export default function Navbar({ user }: NavbarProps) {
                    />
                 </div>
 
-                <div>
-                   <label className="block text-[10px] font-bold text-text-sub uppercase tracking-widest mb-1.5 ml-1">Account Type</label>
-                   <select
-                     value={editRole}
-                     onChange={e => setEditRole(e.target.value as UserRole)}
-                     disabled={user.role !== 'ADMIN'}
-                     className={`w-full border border-border-theme bg-surface rounded-lg px-3 py-2 text-sm outline-none focus:border-primary font-bold transition-all appearance-none ${user.role !== 'ADMIN' ? 'opacity-50 cursor-not-allowed' : ''}`}
-                   >
-                     <option value="PARENT">Parent</option>
-                     <option value="NANNY">Nanny</option>
-                     <option value="ADMIN">Admin</option>
-                   </select>
-                </div>
-
-                {user.role === 'ADMIN' && (
-                  <div className="pt-4 border-t border-border-theme">
-                    <button
-                      type="button"
-                      onClick={() => setShowCodeRotation(!showCodeRotation)}
-                      className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline"
-                    >
-                      {showCodeRotation ? 'Cancel' : 'Rotate Admin Code'}
-                    </button>
-                    {showCodeRotation && (
-                      <div className="mt-3">
-                        <input
-                          type="text"
-                          value={newAdminCode}
-                          onChange={e => setNewAdminCode(e.target.value)}
-                          placeholder="New admin code (min 6 chars)"
-                          className="w-full border border-border-theme bg-surface rounded-lg px-3 py-2 text-sm outline-none focus:border-primary font-bold mb-2"
-                        />
-                        <p className="text-[9px] text-text-sub mb-2">⚠️ Save this code securely. It will replace the current code.</p>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            if (newAdminCode.length < 6) {
-                              setProfileError('Code must be at least 6 characters');
-                              return;
-                            }
-                            // Store in localStorage as a reminder (in production, would be encrypted in Firestore)
-                            localStorage.setItem('admin_code_rotated', new Date().toISOString());
-                            localStorage.setItem('admin_code_length', newAdminCode.length.toString());
-                            setProfileError('Admin code rotation recorded. Update must be deployed by admin.');
-                            setNewAdminCode('');
-                            setShowCodeRotation(false);
-                          }}
-                          className="w-full py-2 bg-error text-white rounded-lg font-bold text-xs uppercase tracking-widest hover:bg-error/90 transition-all"
-                        >
-                          Rotate Code
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
 
                 <div className="pt-4">
                    <button
