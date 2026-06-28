@@ -1,0 +1,117 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "App user with role-based access.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["ADMIN", "PARENT", "NANNY"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "role", "name"]
+    },
+    "ParentProfile": {
+      "title": "Parent Profile",
+      "description": "Additional details for parent users.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "address": { "type": "string" }
+      },
+      "required": ["userId"]
+    },
+    "NannyProfile": {
+      "title": "Nanny Profile",
+      "description": "Additional details for nanny users.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "bio": { "type": "string" }
+      },
+      "required": ["userId"]
+    },
+    "Match": {
+      "title": "Match",
+      "description": "A link between a parent and a nanny.",
+      "type": "object",
+      "properties": {
+        "parentId": { "type": "string" },
+        "nannyId": { "type": "string" },
+        "adminId": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "INACTIVE"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["parentId", "nannyId", "adminId", "status"]
+    },
+    "WeeklySchedule": {
+      "title": "Weekly Schedule",
+      "description": "Historical or planned weekly schedule.",
+      "type": "object",
+      "properties": {
+        "matchId": { "type": "string" },
+        "weekStartDate": { "type": "string", "format": "date" },
+        "type": { "type": "string", "enum": ["STANDARD", "WEEKLY_PLANNED", "WEEKLY_ACTUAL"] },
+        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "DISPUTE"] },
+        "totalHours": { "type": "number" },
+        "version": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["matchId", "type", "status", "totalHours"]
+    },
+    "Shift": {
+      "title": "Shift",
+      "description": "An individual work block.",
+      "type": "object",
+      "properties": {
+        "scheduleId": { "type": "string" },
+        "dayOfWeek": { "type": "string", "enum": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"] },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "totalHours": { "type": "number" }
+      },
+      "required": ["scheduleId", "dayOfWeek", "startTime", "endTime", "totalHours"]
+    },
+    "Approval": {
+      "title": "Approval",
+      "description": "Records parent/nanny approval of a schedule.",
+      "type": "object",
+      "properties": {
+        "scheduleId": { "type": "string" },
+        "userId": { "type": "string" },
+        "role": { "type": "string" },
+        "status": { "type": "string", "enum": ["APPROVED", "CHANGES_REQUESTED"] },
+        "explanation": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["scheduleId", "userId", "role", "status", "timestamp"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "In-app alerts for users.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string" },
+        "read": { "type": "boolean" },
+        "link": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "message", "read", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": { "schema": "User", "description": "Users of the platform." },
+    "/parent_profiles/{profileId}": { "schema": "ParentProfile", "description": "Extended info for parents." },
+    "/nanny_profiles/{profileId}": { "schema": "NannyProfile", "description": "Extended info for nannies." },
+    "/matches/{matchId}": { "schema": "Match", "description": "Matches between parents and nannies." },
+    "/schedules/{scheduleId}": { "schema": "WeeklySchedule", "description": "Schedules (standard or weekly)." },
+    "/schedules/{scheduleId}/shifts/{shiftId}": { "schema": "Shift", "description": "Individual work blocks in a schedule." },
+    "/schedules/{scheduleId}/approvals/{approvalId}": { "schema": "Approval", "description": "Approval log for a schedule." },
+    "/notifications/{notificationId}": { "schema": "Notification", "description": "In-app user notifications." }
+  }
+}

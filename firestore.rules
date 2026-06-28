@@ -1,0 +1,134 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // -------------------------------------------------------------------------
+    // GLOBAL HELPERS
+    // -------------------------------------------------------------------------
+    function isSignedIn() { return request.auth != null; }
+    function isVerified() { return request.auth != null && request.auth.token.email_verified == true; }
+    function isAdmin() { return request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN'; }
+    
+    function isValidId(id) { return id is string; } // Relaxed for dev
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // -------------------------------------------------------------------------
+    // VALIDATION HELPERS
+    // -------------------------------------------------------------------------
+    
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'name', 'role', 'createdAt']) &&
+             data.email is string &&
+             data.name is string &&
+             (data.role == 'ADMIN' || data.role == 'PARENT' || data.role == 'NANNY');
+    }
+
+    function isValidMatch(data) {
+      return data.keys().hasAll(['parentId', 'nannyId', 'adminId', 'status', 'createdAt']);
+    }
+
+    function isValidSchedule(data) {
+      return data.keys().hasAll(['matchId', 'type', 'status', 'totalHours', 'version', 'updatedAt', 'updatedBy']);
+    }
+
+    function isValidShift(data) {
+      return data.keys().hasAll(['scheduleId', 'dayOfWeek', 'startTime', 'endTime', 'totalHours']) &&
+             data.keys().size() == 5 &&
+             isValidId(data.scheduleId) &&
+             (data.dayOfWeek == 'MONDAY' || data.dayOfWeek == 'TUESDAY' || data.dayOfWeek == 'WEDNESDAY' || data.dayOfWeek == 'THURSDAY' || data.dayOfWeek == 'FRIDAY' || data.dayOfWeek == 'SATURDAY' || data.dayOfWeek == 'SUNDAY') &&
+             data.startTime is string && data.endTime is string &&
+             data.totalHours is number;
+    }
+
+    function isValidApproval(data) {
+      return data.keys().hasAll(['scheduleId', 'userId', 'role', 'status', 'timestamp']);
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['userId', 'message', 'read', 'createdAt']);
+    }
+
+    // -------------------------------------------------------------------------
+    // SECURITY RULES
+    // -------------------------------------------------------------------------
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      allow create: if isAdmin() && isValidUser(incoming());
+      allow update: if (isAdmin() || (isSignedIn() && userId == request.auth.uid)) && 
+                     isValidUser(incoming()) && 
+                     incoming().role == existing().role; // Role is immutable for users
+    }
+
+    match /parent_profiles/{profileId} {
+      allow get: if isAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
+      allow list: if isAdmin();
+      allow create, update: if isAdmin();
+    }
+
+    match /nanny_profiles/{profileId} {
+      allow get: if isAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
+      allow list: if isAdmin();
+      allow create, update: if isAdmin();
+    }
+
+    match /matches/{matchId} {
+      allow get: if isAdmin() || (isSignedIn() && (existing().parentId == request.auth.uid || existing().nannyId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && (resource.data.parentId == request.auth.uid || resource.data.nannyId == request.auth.uid));
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() && isValidMatch(incoming());
+
+      match /messages/{messageId} {
+        allow read, write: if isAdmin() || (isSignedIn() && (get(/databases/$(database)/documents/matches/$(matchId)).data.parentId == request.auth.uid || get(/databases/$(database)/documents/matches/$(matchId)).data.nannyId == request.auth.uid));
+      }
+    }
+
+    match /schedules/{scheduleId} {
+      function canAccessSchedule(matchId) {
+        let matchData = get(/databases/$(database)/documents/matches/$(matchId)).data;
+        return isAdmin() || (isSignedIn() && (matchData.parentId == request.auth.uid || matchData.nannyId == request.auth.uid));
+      }
+
+      allow get: if canAccessSchedule(existing().matchId);
+      allow list: if isAdmin() || (isSignedIn() && canAccessSchedule(resource.data.matchId));
+      allow create: if (isAdmin() || isSignedIn()) && isValidSchedule(incoming()) && (
+        isAdmin() || canAccessSchedule(incoming().matchId)
+      );
+      allow update: if (isAdmin() || isSignedIn()) && isValidSchedule(incoming()) && (
+        isAdmin() || canAccessSchedule(existing().matchId)
+      ) && (
+        // Terminal State Locking: Once APPROVED, only Admin can change it
+        (existing().status != 'APPROVED' || isAdmin())
+      ) && (
+        // Action: Change status
+        (incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt', 'updatedBy'])) ||
+        // Action: Full update
+        (incoming().diff(existing()).affectedKeys().hasAll(['totalHours', 'version', 'updatedAt', 'updatedBy']))
+      );
+
+      match /shifts/{shiftId} {
+        allow read: if canAccessSchedule(get(/databases/$(database)/documents/schedules/$(scheduleId)).data.matchId);
+        allow write: if isAdmin() || (isSignedIn() && canAccessSchedule(get(/databases/$(database)/documents/schedules/$(scheduleId)).data.matchId));
+      }
+
+      match /approvals/{approvalId} {
+        allow read: if canAccessSchedule(get(/databases/$(database)/documents/schedules/$(scheduleId)).data.matchId);
+        allow create: if isSignedIn() && isValidId(scheduleId) && 
+                      canAccessSchedule(get(/databases/$(database)/documents/schedules/$(scheduleId)).data.matchId) &&
+                      isValidApproval(incoming());
+      }
+
+      match /messages/{messageId} {
+        allow read, write: if canAccessSchedule(get(/databases/$(database)/documents/schedules/$(scheduleId)).data.matchId);
+      }
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isAdmin() || (isSignedIn()); // Allow users to send system-like notifications if needed for MVP
+      allow update: if isSignedIn() && existing().userId == request.auth.uid && 
+                     incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+    }
+  }
+}
