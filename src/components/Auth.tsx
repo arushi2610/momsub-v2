@@ -171,11 +171,29 @@ export default function Auth() {
     setError(null);
     try {
       const provider = new GoogleAuthProvider();
+      provider.addScope('profile');
+      provider.addScope('email');
       const result = await signInWithPopup(auth, provider);
       await syncUserRecord(result.user);
     } catch (err: any) {
-      console.error(err);
-      setError("Failed to sign in with Google.");
+      console.error('Google sign-in error:', err);
+      let errorMsg = "Failed to sign in with Google.";
+
+      if (err.code === 'auth/popup-blocked') {
+        errorMsg = "Popup was blocked. Please allow popups and try again.";
+      } else if (err.code === 'auth/popup-closed-by-user') {
+        errorMsg = "Sign-in was cancelled.";
+      } else if (err.code === 'auth/operation-not-supported-in-this-environment') {
+        errorMsg = "Google sign-in is not available in this environment.";
+      } else if (err.code === 'auth/operation-not-allowed') {
+        errorMsg = "Google sign-in is not enabled. Please contact support.";
+      } else if (err.message?.includes('unauthorized')) {
+        errorMsg = "This domain is not authorized. Please contact support.";
+      } else if (err.message) {
+        errorMsg = err.message;
+      }
+
+      setError(errorMsg);
     } finally {
       setLoading(false);
     }
