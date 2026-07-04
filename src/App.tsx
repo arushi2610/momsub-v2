@@ -4,6 +4,7 @@ import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from './lib/firebase';
 import { User } from './types';
 import Auth from './components/Auth';
+import PasswordReset from './components/PasswordReset';
 import AdminDashboard from './components/AdminDashboard';
 import ParentDashboard from './components/ParentDashboard';
 import NannyDashboard from './components/NannyDashboard';
@@ -13,6 +14,8 @@ import { Loader2 } from 'lucide-react';
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showPasswordReset, setShowPasswordReset] = useState(false);
+  const [resetCode, setResetCode] = useState<string | null>(null);
   const inactivityTimeoutRef = React.useRef<NodeJS.Timeout>();
   const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 
@@ -42,6 +45,17 @@ export default function App() {
       if (inactivityTimeoutRef.current) clearTimeout(inactivityTimeoutRef.current);
     };
   }, [user]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get('mode');
+    const oobCode = params.get('oobCode');
+
+    if (mode === 'resetPassword' && oobCode) {
+      setShowPasswordReset(true);
+      setResetCode(oobCode);
+    }
+  }, []);
 
   useEffect(() => {
     let unsubscribeDoc: () => void;
@@ -87,6 +101,19 @@ export default function App() {
       <div className="min-h-screen flex items-center justify-center bg-white">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
+    );
+  }
+
+  if (showPasswordReset && resetCode) {
+    return (
+      <PasswordReset
+        oobCode={resetCode}
+        onComplete={() => {
+          setShowPasswordReset(false);
+          setResetCode(null);
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }}
+      />
     );
   }
 

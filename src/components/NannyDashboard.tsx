@@ -3,7 +3,6 @@ import { User, Match, WeeklySchedule, Shift } from '../types';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, query, where, onSnapshot, getDoc, addDoc, serverTimestamp, doc, writeBatch } from 'firebase/firestore';
 import { Calendar, Users, Plus, Send, CheckCircle2, History, LayoutDashboard, MessageSquare, FileText } from 'lucide-react';
-import GlobalCalendar from './GlobalCalendar';
 import ScheduleCard from './ScheduleCard';
 import MatchChat from './MatchChat';
 import { motion, AnimatePresence } from 'motion/react';
@@ -118,7 +117,6 @@ export default function NannyDashboard({ nanny }: NannyDashboardProps) {
         {[
           { id: 'overview', label: 'Overview', icon: LayoutDashboard },
           { id: 'schedules', label: 'Schedules', icon: FileText },
-          { id: 'calendar', label: 'Calendar', icon: Calendar },
           { id: 'messages', label: 'Messages', icon: MessageSquare }
         ].map(tab => (
           <button
@@ -150,13 +148,7 @@ export default function NannyDashboard({ nanny }: NannyDashboardProps) {
                   </div>
                </div>
                
-               <div className="grid grid-cols-2 gap-3">
-                  <div className="p-4 bg-surface rounded-xl border border-border-theme">
-                     <p className="text-[9px] font-bold text-text-sub uppercase tracking-widest mb-1">Completed Hours</p>
-                     <p className="text-xl font-bold text-text-main font-mono italic">
-                        {schedules.filter(s => s.status === 'APPROVED').reduce((sum, s) => sum + (s.totalHours || 0), 0)}
-                     </p>
-                  </div>
+               <div className="grid grid-cols-1 gap-3">
                   <div className="p-4 bg-surface rounded-xl border border-border-theme">
                      <p className="text-[9px] font-bold text-text-sub uppercase tracking-widest mb-1">Status</p>
                      <p className="text-base font-bold text-success uppercase tracking-tighter">Active</p>
@@ -279,13 +271,9 @@ export default function NannyDashboard({ nanny }: NannyDashboardProps) {
          </div>
       )}
 
-      {activeTab === 'calendar' && (
-        <GlobalCalendar schedules={schedules} />
-      )}
-
       {activeTab === 'messages' && (
-         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[600px]">
-            <div className="col-span-1 border border-border-theme rounded-2xl bg-white overflow-hidden flex flex-col">
+         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 md:h-[600px]">
+            <div className="col-span-1 border border-border-theme rounded-2xl bg-white overflow-hidden flex flex-col max-h-[240px] md:max-h-none">
                <div className="p-4 bg-surface border-b border-border-theme">
                   <h3 className="text-xs font-bold text-text-main uppercase tracking-widest">Select Family</h3>
                </div>
@@ -307,11 +295,11 @@ export default function NannyDashboard({ nanny }: NannyDashboardProps) {
                  ))}
                </div>
             </div>
-            <div className="col-span-1 md:col-span-2">
+            <div className="col-span-1 md:col-span-2 h-[500px] md:h-auto">
                {selectedMatchId ? (
                  <MatchChat matchId={selectedMatchId} user={nanny} />
                ) : (
-                 <div className="h-full border border-border-theme rounded-2xl bg-surface flex flex-col items-center justify-center text-text-sub">
+                 <div className="h-full border border-border-theme rounded-2xl bg-surface flex flex-col items-center justify-center text-text-sub p-6 text-center">
                     <MessageSquare className="w-12 h-12 mb-4 opacity-50" />
                     <p className="font-bold">Select a family</p>
                     <p className="text-sm">Start chatting about schedules or updates.</p>

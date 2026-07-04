@@ -3,11 +3,10 @@ import { User, Match, WeeklySchedule, Shift } from '../types';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, query, where, onSnapshot, getDoc, doc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { Calendar, Users, ArrowUpRight, LayoutDashboard, MessageSquare, CheckCircle2, Plus, Clock, FileText } from 'lucide-react';
-import GlobalCalendar from './GlobalCalendar';
 import ScheduleCard from './ScheduleCard';
 import MatchChat from './MatchChat';
 import { motion, AnimatePresence } from 'motion/react';
-import { calculateShiftHours, calculateTotalHours, snapTime15, TIME_OPTIONS, formatTimeLabel, validateTimeRange, validateHours, checkShiftOverlap } from '../lib/utils';
+import { calculateShiftHours, calculateTotalHours, snapTime15, TIME_OPTIONS, formatTimeLabel, validateTimeRange, validateHours } from '../lib/utils';
 
 interface ParentDashboardProps {
   parent: User;
@@ -21,9 +20,6 @@ export default function ParentDashboard({ parent }: ParentDashboardProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'schedules' | 'messages'>('overview');
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
   const [showRequestForm, setShowRequestForm] = useState(false);
-
-  const [isEditingHours, setIsEditingHours] = useState(false);
-  const [newRequestedHours, setNewRequestedHours] = useState(parent.requestedHours || 0);
 
   useEffect(() => {
     const handleOpenSchedule = () => setActiveTab('schedules');
@@ -114,7 +110,6 @@ export default function ParentDashboard({ parent }: ParentDashboardProps) {
         {[
           { id: 'overview', label: 'Overview', icon: LayoutDashboard },
           { id: 'schedules', label: 'Schedules', icon: FileText },
-          { id: 'calendar', label: 'Calendar', icon: Calendar },
           { id: 'messages', label: 'Messages', icon: MessageSquare }
         ].map(tab => (
           <button
@@ -179,39 +174,6 @@ export default function ParentDashboard({ parent }: ParentDashboardProps) {
               )}
             </div>
 
-            <div className="p-6 bg-white rounded-xl border border-border-theme shadow-sm mt-6">
-               <h3 className="text-xs font-bold text-text-main uppercase tracking-widest mb-4">Coverage Requirements</h3>
-               {isEditingHours ? (
-                  <div className="flex gap-2 items-center">
-                     <input 
-                        type="number" 
-                        value={newRequestedHours} 
-                        onChange={e => setNewRequestedHours(Number(e.target.value))}
-                        className="w-20 px-3 py-2 border border-border-theme rounded-lg text-sm font-bold bg-surface outline-none focus:border-primary"
-                        min="0"
-                     />
-                     <span className="text-sm font-bold text-text-sub">hrs/week</span>
-                     <div className="ml-auto flex gap-2">
-                        <button onClick={() => setIsEditingHours(false)} className="px-3 py-1.5 text-xs font-bold text-text-sub hover:bg-surface rounded-lg">Cancel</button>
-                        <button onClick={async () => {
-                           try {
-                             const { doc, updateDoc } = await import('firebase/firestore');
-                             await updateDoc(doc(db, 'users', parent.id), { requestedHours: newRequestedHours });
-                             setIsEditingHours(false);
-                           } catch (err) {}
-                        }} className="px-3 py-1.5 text-xs font-bold bg-primary text-white rounded-lg hover:bg-primary/90">Save</button>
-                     </div>
-                  </div>
-               ) : (
-                  <div className="flex justify-between items-center">
-                     <div>
-                        <p className="text-2xl font-black text-text-main leading-none mb-1">{parent.requestedHours || 0} <span className="text-sm text-text-sub">hrs</span></p>
-                        <p className="text-[10px] font-bold text-text-sub uppercase tracking-widest">Requested per week</p>
-                     </div>
-                     <button onClick={() => setIsEditingHours(true)} className="px-4 py-2 text-xs font-bold bg-surface border border-border-theme rounded-lg hover:border-primary text-text-main transition-colors">Adjust</button>
-                  </div>
-               )}
-            </div>
 
             <div className="p-6 bg-primary rounded-2xl text-white shadow-xl shadow-primary/10 overflow-hidden relative mt-6">
                <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full blur-2xl -mr-8 -mt-8"></div>
@@ -334,13 +296,9 @@ export default function ParentDashboard({ parent }: ParentDashboardProps) {
          </div>
       )}
 
-      {activeTab === 'calendar' && (
-        <GlobalCalendar schedules={schedules} />
-      )}
-
       {activeTab === 'messages' && (
-         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[600px]">
-            <div className="col-span-1 border border-border-theme rounded-2xl bg-white overflow-hidden flex flex-col">
+         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 md:h-[600px]">
+            <div className="col-span-1 border border-border-theme rounded-2xl bg-white overflow-hidden flex flex-col max-h-[240px] md:max-h-none">
                <div className="p-4 bg-surface border-b border-border-theme">
                   <h3 className="text-xs font-bold text-text-main uppercase tracking-widest">Select Nanny</h3>
                </div>
@@ -362,11 +320,11 @@ export default function ParentDashboard({ parent }: ParentDashboardProps) {
                  ))}
                </div>
             </div>
-            <div className="col-span-1 md:col-span-2">
+            <div className="col-span-1 md:col-span-2 h-[500px] md:h-auto">
                {selectedMatchId ? (
                  <MatchChat matchId={selectedMatchId} user={parent} />
                ) : (
-                 <div className="h-full border border-border-theme rounded-2xl bg-surface flex flex-col items-center justify-center text-text-sub">
+                 <div className="h-full border border-border-theme rounded-2xl bg-surface flex flex-col items-center justify-center text-text-sub p-6 text-center">
                     <MessageSquare className="w-12 h-12 mb-4 opacity-50" />
                     <p className="font-bold">Select a nanny</p>
                     <p className="text-sm">Start chatting about schedules or updates.</p>
@@ -392,6 +350,7 @@ function WeeklyRequestForm({ parent, matches, nannies, onClose }: { parent: User
     { dayOfWeek: 'MONDAY', startTime: '09:00', endTime: '17:00' }
   ]);
   const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
 
   useEffect(() => {
      const nextWeek = new Date();
@@ -429,20 +388,8 @@ function WeeklyRequestForm({ parent, matches, nannies, onClose }: { parent: User
       return;
     }
 
-    const matchToCheck = matches.find(m => m.id === matchId);
-    if (matchToCheck) {
-      const existingSchedules = schedules.filter(s => s.matchId === matchId && s.weekStartDate === weekStart);
-      for (const existing of existingSchedules) {
-        const overlapCheck = checkShiftOverlap(shifts as any, []);
-        if (overlapCheck.hasOverlap) {
-          alert('Warning: This schedule overlaps with an existing schedule.');
-        }
-      }
-    }
-
     setLoading(true);
     try {
-      const { doc, collection, writeBatch, serverTimestamp } = await import('firebase/firestore');
       const batch = writeBatch(db);
       const scheduleRef = doc(collection(db, 'schedules'));
       const totalHours = calculateTotalHours(shifts as any);
@@ -485,7 +432,8 @@ function WeeklyRequestForm({ parent, matches, nannies, onClose }: { parent: User
       }
 
       await batch.commit();
-      onClose();
+      setSuccess(true);
+      setTimeout(() => onClose(), 1500);
     } catch (err) {
       console.error(err);
       alert('Failed to request schedule');
@@ -514,6 +462,26 @@ function WeeklyRequestForm({ parent, matches, nannies, onClose }: { parent: User
           </button>
         </div>
 
+        {success ? (
+          <div className="p-6 flex-1 flex flex-col items-center justify-center gap-4">
+            <motion.div
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              className="w-16 h-16 rounded-full bg-success/10 flex items-center justify-center"
+            >
+              <CheckCircle2 className="w-8 h-8 text-success" />
+            </motion.div>
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
+              className="text-center"
+            >
+              <h3 className="text-xl font-bold text-text-main mb-2">Request Submitted!</h3>
+              <p className="text-sm text-text-sub">Your nanny will be notified of the schedule request.</p>
+            </motion.div>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="p-6 space-y-6 flex-1">
           <div className="space-y-4 bg-surface p-4 rounded-xl border border-border-theme">
              <div className="flex flex-col sm:flex-row gap-4">
@@ -614,6 +582,7 @@ function WeeklyRequestForm({ parent, matches, nannies, onClose }: { parent: User
              </button>
           </div>
         </form>
+        )}
       </motion.div>
     </div>
   );

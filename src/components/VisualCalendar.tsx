@@ -1,6 +1,6 @@
 import React from 'react';
 import { Shift, WeeklySchedule } from '../types';
-import { formatHours } from '../lib/utils';
+import { formatHours, calculateShiftHours, calculateTotalHours } from '../lib/utils';
 
 interface VisualCalendarProps {
   shifts: Shift[];
@@ -31,7 +31,8 @@ export default function VisualCalendar({ shifts, scheduleStatus, weekStartDate }
     return map[day];
   };
 
-  const totalHours = shifts.reduce((sum, shift) => sum + shift.totalHours, 0);
+  // Compute from actual shift times so stale stored totals never show
+  const totalHours = calculateTotalHours(shifts);
 
   const getExactDate = (dayIndex: number) => {
     if (!weekStartDate || String(weekStartDate).toLowerCase() === 'undefined') return null;
@@ -131,7 +132,7 @@ export default function VisualCalendar({ shifts, scheduleStatus, weekStartDate }
                         {/* Default View (when tall enough) */}
                         {height > 12 && (
                           <span className="text-[10px] md:text-sm font-black text-white tracking-tight opacity-100 group-hover/shift:opacity-0 transition-opacity">
-                            {formatHours(shift.totalHours)}<span className="text-[8px] font-bold opacity-80 uppercase ml-0.5 hidden md:inline">hrs</span>
+                            {formatHours(calculateShiftHours(shift.startTime, shift.endTime))}<span className="text-[8px] font-bold opacity-80 uppercase ml-0.5 hidden md:inline">hrs</span>
                           </span>
                         )}
                       </div>

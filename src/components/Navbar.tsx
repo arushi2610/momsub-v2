@@ -129,7 +129,7 @@ export default function Navbar({ user }: NavbarProps) {
             </button>
 
             {showNotifications && (
-              <div className="absolute right-0 mt-3 w-80 bg-white border border-border-theme rounded-xl shadow-xl z-50 overflow-hidden">
+              <div className="absolute right-0 mt-3 w-[calc(100vw-2rem)] max-w-80 bg-white border border-border-theme rounded-xl shadow-xl z-50 overflow-hidden">
                 <div className="p-4 bg-surface border-b border-border-theme flex items-center justify-between">
                   <h3 className="font-bold text-text-main text-sm">Notifications</h3>
                   {unreadCount > 0 && (

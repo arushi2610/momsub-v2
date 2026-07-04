@@ -128,9 +128,17 @@ export default function ScheduleCard({ schedule, user, match, onRefresh, onNavig
     try {
       const batch = writeBatch(db);
 
+      // Recompute per-shift hours from the edited times, then the schedule total
+      const recomputedShifts = editedShifts.map(s => ({
+        ...s,
+        totalHours: calculateShiftHours(s.startTime, s.endTime),
+      }));
+      const newTotalHours = calculateTotalHours(recomputedShifts as any);
+
       batch.update(doc(db, 'schedules', schedule.id), {
         status: isAdmin() ? 'APPROVED' : 'PENDING_PARENT',
         adjustmentsCount: (schedule.adjustmentsCount || 0) + 1,
+        totalHours: newTotalHours,
         updatedAt: serverTimestamp(),
       });
 
@@ -138,7 +146,7 @@ export default function ScheduleCard({ schedule, user, match, onRefresh, onNavig
         batch.delete(doc(db, `schedules/${schedule.id}/shifts`, existingShift.id));
       }
 
-      for (const newShift of editedShifts) {
+      for (const newShift of recomputedShifts) {
         batch.set(doc(db, `schedules/${schedule.id}/shifts`, newShift.id), newShift);
       }
 
@@ -256,7 +264,7 @@ export default function ScheduleCard({ schedule, user, match, onRefresh, onNavig
         <div className="flex items-center gap-4">
           <div className="text-right hidden sm:block">
             <p className="text-xl font-bold text-text-main font-mono italic tracking-tighter">
-              {formatHours(isEditing ? calculateTotalHours(editedShifts) : schedule.totalHours)}
+              {formatHours(isEditing ? calculateTotalHours(editedShifts) : (shifts.length > 0 ? calculateTotalHours(shifts) : schedule.totalHours))}
               <span className="text-[10px] font-bold text-text-sub ml-1 uppercase not-italic">hrs</span>
             </p>
           </div>
@@ -330,7 +338,11 @@ export default function ScheduleCard({ schedule, user, match, onRefresh, onNavig
 
           {isEditing && (
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-text-sub uppercase tracking-wider block">Note / Reason</label>
+              <label className="text-[10px] font-bold text-text-sub uppercase tracking-wider flex items-center gap-1.5">
+                Note / Reason
+                <span className="text-error">*</span>
+                <span className="text-[8px] font-bold text-error/80 bg-error/10 px-1.5 py-0.5 rounded-full tracking-tight normal-case">Required</span>
+              </label>
               <textarea
                 value={explanation}
                 onChange={e => setExplanation(e.target.value)}

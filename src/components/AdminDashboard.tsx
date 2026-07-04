@@ -3,7 +3,6 @@ import { User, Match, WeeklySchedule } from '../types';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, query, where, onSnapshot, addDoc, getDocs, serverTimestamp, doc, updateDoc, setDoc, writeBatch, deleteDoc } from 'firebase/firestore';
 import { Plus, Users, LayoutDashboard, AlertCircle, CheckCircle2, ChevronRight, ChevronDown, Power, Unlink, Clock, UserPlus, X, MessageSquare, Archive } from 'lucide-react';
-import GlobalCalendar from './GlobalCalendar';
 import UserForm from './UserForm';
 import MatchForm from './MatchForm';
 import SystemAuditLog from './SystemAuditLog';
@@ -17,7 +16,7 @@ interface AdminDashboardProps {
 }
 
 export default function AdminDashboard({ admin }: AdminDashboardProps) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'matches' | 'calendar' | 'messages' | 'history'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'matches' | 'messages' | 'history'>('overview');
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
@@ -201,7 +200,6 @@ export default function AdminDashboard({ admin }: AdminDashboardProps) {
           { id: 'overview', label: 'Activity' },
           { id: 'users', label: 'Users' },
           { id: 'matches', label: 'Matches' },
-          { id: 'calendar', label: 'Calendar' },
           { id: 'messages', label: 'Chat' },
           { id: 'history', label: 'Audit' }
         ].map(tab => (
@@ -223,15 +221,15 @@ export default function AdminDashboard({ admin }: AdminDashboardProps) {
         <div className="bg-white border border-border-theme rounded-xl md:rounded-2xl overflow-hidden shadow-sm min-h-[400px]">
           {activeTab === 'overview' && (
             <div className="flex flex-col h-full">
-            <div className="px-6 py-3 bg-surface border-b border-border-theme flex items-center justify-between">
+            <div className="px-4 md:px-6 py-3 bg-surface border-b border-border-theme flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <span className="text-[11px] font-bold text-text-sub uppercase tracking-widest tracking-[0.2em]">Stream</span>
-              <div className="flex items-center gap-4">
-                 <input 
-                   type="text" 
-                   placeholder="Search names or dates..." 
+              <div className="flex items-center gap-3 md:gap-4">
+                 <input
+                   type="text"
+                   placeholder="Search names or dates..."
                    value={streamSearchTerm}
                    onChange={e => setStreamSearchTerm(e.target.value)}
-                   className="bg-white border border-border-theme rounded text-xs px-3 py-1.5 outline-none placeholder-text-sub/50 focus:border-primary transition-colors min-w-[200px]"
+                   className="bg-white border border-border-theme rounded text-xs px-3 py-1.5 outline-none placeholder-text-sub/50 focus:border-primary transition-colors flex-1 sm:flex-none sm:min-w-[200px]"
                  />
                  <span className="text-[10px] text-primary bg-primary-soft px-2 py-0.5 rounded font-bold uppercase">Live Updates</span>
               </div>
@@ -515,12 +513,6 @@ export default function AdminDashboard({ admin }: AdminDashboardProps) {
       )}
 
       {/* Overlays */}
-        {activeTab === 'calendar' && (
-          <div className="my-6">
-            <GlobalCalendar schedules={schedules} />
-          </div>
-        )}
-
         {activeTab === 'history' && (
            <SystemAuditLog schedules={schedules} matches={matches} users={users} />
         )}

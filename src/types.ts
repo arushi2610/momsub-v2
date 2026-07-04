@@ -47,6 +47,7 @@ export interface Shift {
   startTime: string; // HH:mm
   endTime: string; // HH:mm
   totalHours: number;
+  colorClass?: string; // UI-only: assigned for calendar rendering
 }
 
 export interface Approval {
