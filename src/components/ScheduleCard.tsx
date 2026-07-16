@@ -1,441 +1,452 @@
-import React, { useState, useEffect } from 'react';
-import { WeeklySchedule, Shift, User, Approval, UserRole, ScheduleStatus } from '../types';
+import React, { useState } from 'react';
+import { Shift, User, UserRole, ScheduleStatus, WeekView, Match } from '../types';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, query, onSnapshot, doc, updateDoc, addDoc, serverTimestamp, getDocs, writeBatch } from 'firebase/firestore';
-import { Clock, CheckCircle2, AlertCircle, MessageSquare, ChevronDown, ChevronUp, Save, ChevronLeft, ChevronRight, X } from 'lucide-react';
-import { calculateShiftHours, calculateTotalHours, snapTime15, TIME_OPTIONS, formatTimeLabel, formatHours } from '../lib/utils';
-import { getErrorMessage } from '../lib/firebase';
+import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore';
+import { Clock, CheckCircle2, AlertCircle, MessageSquare, Save, Plus, Trash2, Lock, Repeat } from 'lucide-react';
+import { calculateShiftHours, calculateTotalHours, TIME_OPTIONS, formatTimeLabel, formatHours, validateTimeRange } from '../lib/utils';
+import { daysUntilLocked, formatWeekRange } from '../lib/week';
 import DisputeChat from './DisputeChat';
 import VisualCalendar from './VisualCalendar';
 
+const DAYS: Shift['dayOfWeek'][] = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+
 interface ScheduleCardProps {
-  schedule: WeeklySchedule;
+  weekView: WeekView;
   user: User;
-  match: any;
-  onRefresh?: () => void;
-  onNavigateWeek?: (dir: 'prev' | 'next', targetWeek: string) => void;
-  key?: React.Key;
+  match: Match | undefined;
+  onChanged?: () => void;
 }
 
-export default function ScheduleCard({ schedule, user, match, onRefresh, onNavigateWeek }: ScheduleCardProps) {
-  const [shifts, setShifts] = useState<Shift[]>([]);
-  const [approvals, setApprovals] = useState<Approval[]>([]);
-  const [expanded, setExpanded] = useState(false);
+type DraftShift = { key: string; dayOfWeek: Shift['dayOfWeek']; startTime: string; endTime: string };
+
+/** Who the ball is with after `actor` adjusts a week. Admin is the arbiter: their word is final. */
+function statusAfterAdjustment(actor: UserRole): ScheduleStatus {
+  if (actor === 'PARENT') return 'PENDING_NANNY';
+  if (actor === 'NANNY') return 'PENDING_PARENT';
+  return 'APPROVED';
+}
+
+function canApprove(status: ScheduleStatus, role: UserRole): boolean {
+  if (role === 'ADMIN') return status !== 'APPROVED';
+  if (status === 'PENDING_NANNY') return role === 'NANNY';
+  if (status === 'PENDING_PARENT') return role === 'PARENT';
+  return false;
+}
+
+export default function ScheduleCard({ weekView, user, match, onChanged }: ScheduleCardProps) {
+  const { schedule, shifts, isStandard, locked, weekStartDate, matchId } = weekView;
+
   const [isEditing, setIsEditing] = useState(false);
-  const [editedShifts, setEditedShifts] = useState<Shift[]>([]);
+  const [draft, setDraft] = useState<DraftShift[]>([]);
   const [explanation, setExplanation] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const normalizeWeekStart = (dateValue: any): string => {
-    let date: Date;
+  const status: ScheduleStatus = schedule?.status ?? 'APPROVED';
+  const totalHours = isEditing ? calculateTotalHours(draft) : calculateTotalHours(shifts);
+  const graceDays = daysUntilLocked(weekStartDate);
 
-    if (typeof dateValue === 'string') {
-      // Handle "YYYY-MM-DD" format
-      const [y, m, d] = dateValue.split('-');
-      date = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
-    } else if (dateValue instanceof Date) {
-      date = new Date(dateValue);
-    } else if (dateValue && typeof dateValue.toDate === 'function') {
-      // Handle Firestore Timestamp
-      date = new Date(dateValue.toDate());
-    } else {
-      return String(dateValue);
-    }
-
-    // Normalize to Monday
-    const dayOfWeek = date.getDay();
-    const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-    date.setDate(date.getDate() - daysToSubtract);
-
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+  const startAdjusting = () => {
+    setDraft(
+      shifts
+        .slice()
+        .sort((a, b) => DAYS.indexOf(a.dayOfWeek) - DAYS.indexOf(b.dayOfWeek))
+        .map((s, i) => ({ key: `${s.id || 'std'}-${i}`, dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime }))
+    );
+    setExplanation('');
+    setError(null);
+    setIsEditing(true);
   };
 
-  const [localWeek, setLocalWeek] = useState(() => {
-    if (schedule?.weekStartDate) {
-       return normalizeWeekStart(schedule.weekStartDate);
-    }
-    const d = new Date();
-    d.setDate(d.getDate() - ((d.getDay() === 0 ? 7 : d.getDay()) - 1));
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  });
+  const addDay = () =>
+    setDraft(d => [...d, { key: `new-${Date.now()}-${d.length}`, dayOfWeek: 'MONDAY', startTime: '09:00', endTime: '17:00' }]);
 
-  useEffect(() => {
-    if (schedule?.weekStartDate) {
-       setLocalWeek(normalizeWeekStart(schedule.weekStartDate));
-    }
-  }, [schedule?.weekStartDate]);
+  const removeDay = (key: string) => setDraft(d => d.filter(s => s.key !== key));
 
-  const handleNavigateWeek = (e: React.MouseEvent, dir: 'prev' | 'next') => {
-      e.stopPropagation();
-      const [y, m, d] = String(localWeek).split('-');
-      const date = new Date(parseInt(y), parseInt(m)-1, parseInt(d));
-      date.setDate(date.getDate() + (dir === 'next' ? 7 : -7));
-      const nextWeekStr = date.toISOString().split('T')[0];
-      setLocalWeek(nextWeekStr);
-      if (onNavigateWeek) onNavigateWeek(dir, nextWeekStr);
+  const updateDraft = (key: string, field: keyof DraftShift, value: string) =>
+    setDraft(d => d.map(s => (s.key === key ? { ...s, [field]: value } : s)));
+
+  const otherPartyId = () => {
+    if (!match) return null;
+    if (user.role === 'PARENT') return match.nannyId;
+    if (user.role === 'NANNY') return match.parentId;
+    return null;
   };
 
-  useEffect(() => {
-    const qShifts = query(collection(db, `schedules/${schedule.id}/shifts`));
-    const unsubShifts = onSnapshot(qShifts, (snap) => {
-      setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Shift)));
-    });
-
-    const qApprovals = query(collection(db, `schedules/${schedule.id}/approvals`));
-    const unsubApprovals = onSnapshot(qApprovals, (snap) => {
-      setApprovals(snap.docs.map(d => ({ id: d.id, ...d.data() } as Approval)));
-    });
-
-    return () => {
-      unsubShifts();
-      unsubApprovals();
-    };
-  }, [schedule.id]);
-
-  const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-
-  const isAdmin = () => user.role === 'ADMIN';
-
-  const handleApprove = async () => {
-    if (!match?.id) {
-      handleFirestoreError(new Error('No match found'), OperationType.WRITE, 'schedules');
+  /**
+   * Writes the week's CURRENT schedule. If the week was still inheriting the
+   * standard, this is where it becomes a real record — the standard itself is
+   * never touched.
+   */
+  const saveAdjustment = async () => {
+    if (!explanation.trim()) {
+      setError('Please say why you are adjusting this week.');
       return;
     }
-    setLoading(true);
-    try {
-      await updateDoc(doc(db, 'schedules', schedule.id), { status: 'APPROVED' });
-      onRefresh?.();
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `schedules/${schedule.id}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAdjustment = async () => {
-    if (!isEditing || !explanation.trim() || editedShifts.length === 0) {
-      alert('Please enter a reason for the adjustment');
-      return;
+    for (const s of draft) {
+      const check = validateTimeRange(s.startTime, s.endTime);
+      if (!check.valid) {
+        setError(`${s.dayOfWeek.slice(0, 3)}: ${check.error}`);
+        return;
+      }
     }
 
     setLoading(true);
+    setError(null);
     try {
       const batch = writeBatch(db);
+      const newStatus = statusAfterAdjustment(user.role);
+      const newTotal = calculateTotalHours(draft);
+      const scheduleRef = schedule ? doc(db, 'schedules', schedule.id) : doc(collection(db, 'schedules'));
 
-      // Recompute per-shift hours from the edited times, then the schedule total
-      const recomputedShifts = editedShifts.map(s => ({
-        ...s,
-        totalHours: calculateShiftHours(s.startTime, s.endTime),
-      }));
-      const newTotalHours = calculateTotalHours(recomputedShifts as any);
-
-      batch.update(doc(db, 'schedules', schedule.id), {
-        status: isAdmin() ? 'APPROVED' : 'PENDING_PARENT',
-        adjustmentsCount: (schedule.adjustmentsCount || 0) + 1,
-        totalHours: newTotalHours,
-        updatedAt: serverTimestamp(),
-      });
-
-      for (const existingShift of shifts) {
-        batch.delete(doc(db, `schedules/${schedule.id}/shifts`, existingShift.id));
+      if (schedule) {
+        batch.update(scheduleRef, {
+          status: newStatus,
+          totalHours: newTotal,
+          version: (schedule.version || 1) + 1,
+          adjustmentsCount: (schedule.adjustmentsCount || 0) + 1,
+          lastAdjustedByRole: user.role,
+          explanation: explanation.trim(),
+          updatedAt: serverTimestamp(),
+          updatedBy: user.id,
+        });
+        // Shifts are replaced wholesale: an adjustment can add, remove or move days.
+        for (const existing of shifts) {
+          if (existing.id) batch.delete(doc(db, `schedules/${schedule.id}/shifts`, existing.id));
+        }
+      } else {
+        batch.set(scheduleRef, {
+          matchId,
+          weekStartDate,
+          type: 'WEEKLY',
+          status: newStatus,
+          totalHours: newTotal,
+          version: 1,
+          adjustmentsCount: 1,
+          lastAdjustedByRole: user.role,
+          explanation: explanation.trim(),
+          updatedAt: serverTimestamp(),
+          updatedBy: user.id,
+        });
       }
 
-      for (const newShift of recomputedShifts) {
-        batch.set(doc(db, `schedules/${schedule.id}/shifts`, newShift.id), newShift);
+      for (const s of draft) {
+        batch.set(doc(collection(db, `schedules/${scheduleRef.id}/shifts`)), {
+          scheduleId: scheduleRef.id,
+          dayOfWeek: s.dayOfWeek,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          totalHours: calculateShiftHours(s.startTime, s.endTime),
+        });
       }
 
-      await addDoc(collection(db, `schedules/${schedule.id}/audit`), {
-        action: 'ADJUSTED',
+      batch.set(doc(collection(db, `schedules/${scheduleRef.id}/approvals`)), {
+        scheduleId: scheduleRef.id,
+        userId: user.id,
         role: user.role,
-        reason: explanation.trim(),
+        status: 'CHANGES_REQUESTED',
+        explanation: explanation.trim(),
         timestamp: serverTimestamp(),
-        previousStatus: schedule.status,
-        newStatus: isAdmin() ? 'APPROVED' : 'PENDING_PARENT',
       });
+
+      const week = formatWeekRange(weekStartDate);
+      const recipients =
+        user.role === 'ADMIN'
+          ? [match?.parentId, match?.nannyId].filter(Boolean)
+          : [otherPartyId()].filter(Boolean);
+
+      for (const uid of recipients) {
+        batch.set(doc(collection(db, 'notifications')), {
+          userId: uid,
+          scheduleId: scheduleRef.id,
+          message:
+            user.role === 'ADMIN'
+              ? `Admin adjusted the schedule for ${week}.`
+              : `${user.name} requested a schedule change for ${week}. Please review.`,
+          type: 'SCHEDULE_ADJUSTED',
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+      }
 
       await batch.commit();
       setIsEditing(false);
-      setEditedShifts([]);
+      setDraft([]);
       setExplanation('');
-      onRefresh?.();
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `schedules/${schedule.id}`);
+      onChanged?.();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'schedules');
+      setError('Could not save the adjustment. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  const startAdjusting = () => {
-    setIsEditing(true);
-    setEditedShifts(JSON.parse(JSON.stringify(shifts)));
-    setExplanation('');
-  };
+  const approve = async () => {
+    if (!schedule) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'schedules', schedule.id), {
+        status: 'APPROVED',
+        totalHours: schedule.totalHours,
+        version: (schedule.version || 1) + 1,
+        updatedAt: serverTimestamp(),
+        updatedBy: user.id,
+      });
 
-  const updateEditedShift = (id: string, field: 'startTime' | 'endTime', value: string) => {
-    setEditedShifts(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s));
-  };
+      batch.set(doc(collection(db, `schedules/${schedule.id}/approvals`)), {
+        scheduleId: schedule.id,
+        userId: user.id,
+        role: user.role,
+        status: 'APPROVED',
+        timestamp: serverTimestamp(),
+      });
 
-  const getStatusLabel = () => {
-    switch (schedule.status) {
-      case 'PENDING_NANNY': return 'Awaiting Nanny';
-      case 'PENDING_PARENT': return 'Awaiting Parent';
-      case 'APPROVED': return 'Approved';
-      case 'DISPUTE': return 'Disputed';
-      default: return schedule.status;
+      const target = otherPartyId();
+      if (target) {
+        batch.set(doc(collection(db, 'notifications')), {
+          userId: target,
+          scheduleId: schedule.id,
+          message: `${user.name} approved the schedule for ${formatWeekRange(weekStartDate)}.`,
+          type: 'SCHEDULE_APPROVED',
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+      }
+
+      await batch.commit();
+      onChanged?.();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `schedules/${schedule.id}`);
+      setError('Could not approve. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const getBorderClass = (status: ScheduleStatus) => {
+  const statusLabel = () => {
+    if (isStandard) return 'Standard schedule';
     switch (status) {
-      case 'APPROVED': return 'border-success/50 shadow-lg shadow-success/10';
-      case 'DISPUTE': return 'border-error/50 shadow-lg shadow-error/10';
-      default: return 'border-border-theme shadow-sm';
+      case 'PENDING_NANNY': return 'Awaiting nanny';
+      case 'PENDING_PARENT': return 'Awaiting parent';
+      case 'APPROVED': return 'Approved by both';
+      case 'DISPUTE': return 'Disputed';
     }
   };
+
+  const statusTone = () => {
+    if (isStandard) return { dot: 'bg-indigo-500', text: 'text-indigo-600' };
+    switch (status) {
+      case 'APPROVED': return { dot: 'bg-success', text: 'text-success' };
+      case 'DISPUTE': return { dot: 'bg-error', text: 'text-error' };
+      default: return { dot: 'bg-warning', text: 'text-warning' };
+    }
+  };
+  const tone = statusTone();
+
+  const showApprove = !isEditing && !locked && !isStandard && canApprove(status, user.role);
+  const showAdjust = !isEditing && !locked;
 
   return (
-    <div id={`schedule-${schedule.id}`} className={`bg-white border transition-all duration-300 rounded-xl overflow-hidden ${getBorderClass(schedule.status)}`}>
-      <div className="px-6 py-4 bg-surface border-b border-border-theme flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+    <div className="bg-white border border-border-theme rounded-xl overflow-hidden shadow-sm">
+      <div className="px-4 sm:px-6 py-4 bg-surface border-b border-border-theme flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary shrink-0">
             <Clock className="w-5 h-5" />
           </div>
-          <div>
-            <div className="flex items-center gap-2 mb-0.5">
-              <h3 className="text-sm font-bold text-text-main tracking-tight uppercase">
-                {(() => {
-                  try {
-                    const [y, m, d] = String(localWeek).split('-');
-                    let startDate = new Date(parseInt(y), parseInt(m)-1, parseInt(d));
-                    if (isNaN(startDate.getTime())) return localWeek;
-
-                    // Ensure week starts on Monday
-                    const dayOfWeek = startDate.getDay();
-                    const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-                    startDate.setDate(startDate.getDate() - daysToSubtract);
-
-                    const endDate = new Date(startDate);
-                    endDate.setDate(startDate.getDate() + 6);
-                    return `${startDate.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} to ${endDate.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
-                  } catch(e) {
-                    return String(localWeek) || 'Unknown';
-                  }
-                })()}
-              </h3>
-              {onNavigateWeek && (
-                <div className="flex items-center gap-1 ml-2">
-                  <button onClick={(e) => handleNavigateWeek(e, 'prev')} className="p-1 hover:bg-black/5 rounded text-text-sub hover:text-text-main transition-colors">
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <button onClick={(e) => handleNavigateWeek(e, 'next')} className="p-1 hover:bg-black/5 rounded text-text-sub hover:text-text-main transition-colors">
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className={`w-1.5 h-1.5 rounded-full ${tone.dot}`} />
+              <p className={`text-[10px] font-bold uppercase tracking-tight ${tone.text}`}>{statusLabel()}</p>
+              {isStandard && (
+                <span className="inline-flex items-center gap-1 text-[9px] font-bold text-indigo-600 bg-indigo-500/10 px-1.5 py-0.5 rounded uppercase">
+                  <Repeat className="w-2.5 h-2.5" /> Recurring
+                </span>
               )}
-              <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${schedule.type === 'WEEKLY_ACTUAL' ? 'bg-warning/10 text-warning' : schedule.type === 'STANDARD' ? 'bg-indigo-500/10 text-indigo-600' : 'bg-primary/10 text-primary'}`}>
-                 {schedule.type.replace('WEEKLY_', '')}
-              </span>
+              {locked && (
+                <span className="inline-flex items-center gap-1 text-[9px] font-bold text-text-sub bg-border-theme/40 px-1.5 py-0.5 rounded uppercase">
+                  <Lock className="w-2.5 h-2.5" /> Closed
+                </span>
+              )}
             </div>
-            <div className="flex items-center gap-3">
-               <div className="flex items-center gap-1.5">
-                 <span className={`w-1.5 h-1.5 rounded-full ${schedule.status === 'APPROVED' ? 'bg-success' : schedule.status === 'DISPUTE' ? 'bg-error' : schedule.status === 'PENDING_PARENT' ? 'bg-primary' : 'bg-warning'}`}></span>
-                 <p className={`text-[10px] font-bold uppercase tracking-tight ${schedule.status === 'APPROVED' ? 'text-success' : schedule.status === 'DISPUTE' ? 'text-error' : schedule.status === 'PENDING_PARENT' ? 'text-primary' : 'text-warning'}`}>{getStatusLabel()}</p>
-               </div>
-               {(schedule.status === 'PENDING_PARENT' || schedule.status === 'PENDING_NANNY') && schedule.updatedAt && (() => {
-                 const daysPending = Math.floor((Date.now() - (schedule.updatedAt.seconds ? schedule.updatedAt.seconds * 1000 : Date.now())) / (1000 * 60 * 60 * 24));
-                 if (daysPending >= 3) {
-                   return (
-                     <span className="text-[9px] font-bold text-warning uppercase px-1.5 py-0.5 rounded bg-warning/10">
-                       Pending {daysPending}d
-                     </span>
-                   );
-                 }
-               })()}
-            </div>
+            {schedule?.adjustmentsCount ? (
+              <p className="text-[10px] text-text-sub mt-0.5">Adjusted {schedule.adjustmentsCount}x</p>
+            ) : (
+              <p className="text-[10px] text-text-sub mt-0.5">
+                {isStandard ? 'Inherited from the recurring schedule' : 'No changes yet'}
+              </p>
+            )}
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="text-right hidden sm:block">
-            <p className="text-xl font-bold text-text-main font-mono italic tracking-tighter">
-              {formatHours(isEditing ? calculateTotalHours(editedShifts) : (shifts.length > 0 ? calculateTotalHours(shifts) : schedule.totalHours))}
-              <span className="text-[10px] font-bold text-text-sub ml-1 uppercase not-italic">hrs</span>
-            </p>
-          </div>
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="p-1.5 hover:bg-border-theme/30 rounded-lg transition-colors text-text-sub"
-          >
-            {expanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-          </button>
+        <div className="text-right shrink-0">
+          <p className="text-xl font-bold text-text-main font-mono italic tracking-tighter">
+            {formatHours(totalHours)}
+            <span className="text-[10px] font-bold text-text-sub ml-1 uppercase not-italic">hrs</span>
+          </p>
         </div>
       </div>
 
-      {expanded && (
-        <div className="p-6 space-y-6">
-          {isEditing ? (
-            <div className="bg-surface rounded-xl border border-border-theme overflow-hidden">
-              {editedShifts.length === 0 ? (
-                <div className="px-6 py-12 text-center text-text-sub italic text-sm">
-                  No work hours scheduled yet.
+      <div className="p-4 sm:p-6 space-y-6">
+        {isEditing ? (
+          <div className="space-y-3">
+            {draft.length === 0 && (
+              <div className="px-6 py-10 text-center text-text-sub italic text-sm bg-surface rounded-xl border border-dashed border-border-theme">
+                No days scheduled. This week would be zero hours.
+              </div>
+            )}
+            {draft.map(s => (
+              <div key={s.key} className="flex flex-wrap sm:flex-nowrap items-center gap-2 bg-surface p-3 rounded-xl border border-border-theme">
+                <select
+                  value={s.dayOfWeek}
+                  onChange={e => updateDraft(s.key, 'dayOfWeek', e.target.value)}
+                  className="border border-border-theme bg-white rounded-lg px-2 py-2 text-xs font-bold outline-none focus:border-primary flex-1 min-w-[110px]"
+                >
+                  {DAYS.map(d => <option key={d} value={d}>{d.charAt(0) + d.slice(1).toLowerCase()}</option>)}
+                </select>
+                <div className="flex items-center gap-2 flex-1 min-w-[170px]">
+                  <select
+                    value={s.startTime}
+                    onChange={e => updateDraft(s.key, 'startTime', e.target.value)}
+                    className="w-full border border-border-theme bg-white rounded-lg px-2 py-2 text-xs font-bold outline-none focus:border-primary appearance-none"
+                  >
+                    {TIME_OPTIONS.map(t => <option key={t} value={t}>{formatTimeLabel(t)}</option>)}
+                  </select>
+                  <span className="text-text-sub text-xs">to</span>
+                  <select
+                    value={s.endTime}
+                    onChange={e => updateDraft(s.key, 'endTime', e.target.value)}
+                    className="w-full border border-border-theme bg-white rounded-lg px-2 py-2 text-xs font-bold outline-none focus:border-primary appearance-none"
+                  >
+                    {TIME_OPTIONS.map(t => <option key={t} value={t}>{formatTimeLabel(t)}</option>)}
+                  </select>
                 </div>
-              ) : (
-                <>
-                  <div className="hidden sm:grid grid-cols-4 px-6 py-2 bg-border-theme/20 border-b border-border-theme text-[9px] font-bold text-text-sub uppercase tracking-widest">
-                    <span>Day</span>
-                    <span>Timeline</span>
-                    <span className="text-right col-span-2">Hours</span>
-                  </div>
-                  <div className="divide-y divide-border-theme">
-                    {editedShifts.sort((a,b) => days.indexOf(a.dayOfWeek) - days.indexOf(b.dayOfWeek)).map((s) => (
-                      <div key={s.id} className="flex flex-col sm:grid sm:grid-cols-4 px-4 sm:px-6 py-3 sm:items-center hover:bg-white transition-colors gap-2 sm:gap-0">
-                        <span className="text-[11px] font-bold text-text-main uppercase tracking-tight">{s.dayOfWeek.slice(0, 3)}</span>
-                        <div className="sm:col-span-2">
-                          <div className="flex items-center gap-2">
-                            <select
-                              value={s.startTime}
-                              onChange={e => updateEditedShift(s.id, 'startTime', e.target.value)}
-                              className="text-[11px] font-bold bg-white border border-border-theme rounded px-1.5 py-0.5 outline-none focus:border-primary appearance-none min-w-[70px] flex-1 sm:flex-none text-center"
-                            >
-                               {TIME_OPTIONS.map(t => <option key={t} value={t}>{formatTimeLabel(t)}</option>)}
-                            </select>
-                            <span className="text-[10px] text-text-sub">/</span>
-                            <select
-                              value={s.endTime}
-                              onChange={e => updateEditedShift(s.id, 'endTime', e.target.value)}
-                              className="text-[11px] font-bold bg-white border border-border-theme rounded px-1.5 py-0.5 outline-none focus:border-primary appearance-none min-w-[70px] flex-1 sm:flex-none text-center"
-                            >
-                               {TIME_OPTIONS.map(t => <option key={t} value={t}>{formatTimeLabel(t)}</option>)}
-                            </select>
-                          </div>
-                        </div>
-                        <p className="text-left sm:text-right text-[11px] font-bold text-text-main font-mono italic">
-                          {formatHours(calculateShiftHours(s.startTime, s.endTime))} <span className="text-[9px] not-italic text-text-sub uppercase">hrs</span>
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          ) : (
-            <>
-              {shifts.length === 0 ? (
-                <div className="p-12 text-center text-text-sub italic text-sm bg-surface rounded-xl border border-border-theme">
-                  No work hours scheduled for this week.
-                </div>
-              ) : (
-                <VisualCalendar shifts={shifts} scheduleStatus={schedule.status} weekStartDate={localWeek} />
-              )}
-            </>
-          )}
+                <span className="text-[11px] font-bold text-text-main font-mono italic w-14 text-right">
+                  {formatHours(calculateShiftHours(s.startTime, s.endTime))}h
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeDay(s.key)}
+                  title="Remove this day"
+                  className="p-2 text-error bg-error/10 hover:bg-error hover:text-white rounded-lg transition-colors shrink-0"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
 
-          {isEditing && (
-            <div className="space-y-2">
+            <button
+              type="button"
+              onClick={addDay}
+              className="w-full py-3 border-2 border-dashed border-border-theme text-primary font-bold text-xs rounded-xl hover:bg-surface hover:border-primary transition-all flex items-center justify-center gap-2 uppercase tracking-widest"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add a day
+            </button>
+
+            <div className="space-y-2 pt-2">
               <label className="text-[10px] font-bold text-text-sub uppercase tracking-wider flex items-center gap-1.5">
-                Note / Reason
-                <span className="text-error">*</span>
-                <span className="text-[8px] font-bold text-error/80 bg-error/10 px-1.5 py-0.5 rounded-full tracking-tight normal-case">Required</span>
+                Reason for this change <span className="text-error">*</span>
               </label>
               <textarea
                 value={explanation}
                 onChange={e => setExplanation(e.target.value)}
-                placeholder="Briefly state the reason for adjustment..."
-                className="w-full bg-white border border-border-theme rounded-xl p-3 text-xs min-h-[80px] outline-none focus:border-primary transition-all text-text-main"
+                placeholder="e.g. Wednesday is cancelled, we're travelling."
+                className="w-full bg-white border border-border-theme rounded-xl p-3 text-xs min-h-[72px] outline-none focus:border-primary transition-all text-text-main"
               />
             </div>
-          )}
-
-          <div className="flex flex-col md:flex-row items-center justify-between gap-3 md:gap-6 pt-4 md:pt-6 border-t border-border-theme">
-             <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-               {schedule.adjustmentsCount ? (
-                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-warning/30 bg-warning/5 text-warning">
-                   <AlertCircle className="w-3 h-3" />
-                   <span className="text-[9px] font-bold uppercase tracking-tight">Adjusted {schedule.adjustmentsCount}x</span>
-                 </div>
-               ) : null}
-             </div>
-
-             <div className="flex items-center gap-2 md:gap-3 w-full md:w-auto">
-                {isEditing && (
-                  <>
-                    <button
-                      onClick={() => setIsEditing(false)}
-                      className="flex-1 md:flex-none px-4 md:px-6 py-3 md:py-2 rounded-lg text-[10px] font-bold text-text-sub border border-border-theme hover:bg-surface transition-all uppercase tracking-widest"
-                    >
-                      Discard
-                    </button>
-                    <button
-                      onClick={handleAdjustment}
-                      disabled={loading || (!explanation && user.role !== 'ADMIN')}
-                      className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-primary text-white px-4 md:px-6 py-3 md:py-2 rounded-lg text-[10px] font-bold shadow-sm transition-all hover:bg-primary/90 disabled:opacity-50 uppercase tracking-widest"
-                    >
-                      {loading ? <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                      Save Changes
-                    </button>
-                  </>
-                )}
-
-                {!isEditing && schedule.status !== 'APPROVED' && schedule.status !== 'DISPUTE' && !isAdmin() && (
-                  (user.role === 'NANNY' && schedule.status === 'PENDING_NANNY') ||
-                  (user.role === 'PARENT' && schedule.status === 'PENDING_PARENT') ? (
-                    <>
-                      <button
-                        onClick={startAdjusting}
-                        className="px-6 py-2 rounded-lg text-[10px] font-bold text-text-sub border border-border-theme hover:bg-surface transition-all uppercase tracking-widest"
-                      >
-                        Adjust
-                      </button>
-                      <button
-                        onClick={handleApprove}
-                        disabled={loading}
-                        className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-primary text-white px-8 py-2 rounded-lg text-[10px] font-bold shadow-sm transition-all hover:bg-primary/90 disabled:opacity-50 uppercase tracking-widest"
-                      >
-                        {loading ? <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                        Approve
-                      </button>
-                    </>
-                  ) : (
-                    <span className="text-[10px] font-bold text-text-sub italic bg-surface px-4 py-2 rounded-lg uppercase tracking-wider border border-border-theme">Awaiting Parent...</span>
-                  )
-                )}
-
-                {!isEditing && schedule.status === 'DISPUTE' && !isAdmin() && (
-                   <span className="text-[10px] font-bold text-error italic bg-error/5 px-4 py-2 rounded-lg uppercase tracking-wider border border-error/20 flex items-center gap-2">
-                     <AlertCircle className="w-3.5 h-3.5" /> Awaiting Admin
-                   </span>
-                )}
-
-                {schedule.status === 'APPROVED' && (
-                  <div className="flex items-center gap-2 text-success font-bold uppercase text-[10px] tracking-widest bg-success/5 px-4 py-2 rounded-lg border border-success/20">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    Approved
-                  </div>
-                )}
-             </div>
           </div>
+        ) : shifts.length === 0 ? (
+          <div className="p-10 text-center text-text-sub italic text-sm bg-surface rounded-xl border border-border-theme">
+            No hours scheduled for this week.
+          </div>
+        ) : (
+          <VisualCalendar shifts={shifts} scheduleStatus={status} weekStartDate={weekStartDate} />
+        )}
 
-          {schedule.status === 'DISPUTE' && schedule.explanation && (
-            <div className="p-4 bg-error/5 rounded-xl border border-error/10 flex gap-3">
-              <MessageSquare className="w-4 h-4 text-error shrink-0 mt-0.5" />
-              <div>
-                <p className="text-[9px] font-bold text-error uppercase tracking-widest mb-1">Reason</p>
-                <p className="text-[11px] text-text-main italic leading-relaxed">"{schedule.explanation}"</p>
-              </div>
+        {schedule?.explanation && !isEditing && (
+          <div className="p-4 bg-surface rounded-xl border border-border-theme flex gap-3">
+            <MessageSquare className="w-4 h-4 text-text-sub shrink-0 mt-0.5" />
+            <div>
+              <p className="text-[9px] font-bold text-text-sub uppercase tracking-widest mb-1">
+                Reason from {schedule.lastAdjustedByRole?.toLowerCase() ?? 'requester'}
+              </p>
+              <p className="text-[11px] text-text-main italic leading-relaxed">"{schedule.explanation}"</p>
             </div>
-          )}
+          </div>
+        )}
 
-          {schedule.status === 'DISPUTE' && (
-            <DisputeChat scheduleId={schedule.id} user={user} />
-          )}
+        {error && (
+          <div className="p-3 bg-error/10 text-error text-xs font-bold rounded-lg">{error}</div>
+        )}
+
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-4 border-t border-border-theme">
+          <p className="text-[10px] text-text-sub">
+            {locked
+              ? 'This week is closed. Changes were allowed until 7 days after it ended.'
+              : `Adjustable for ${graceDays} more day${graceDays === 1 ? '' : 's'}.`}
+          </p>
+
+          <div className="flex items-center gap-2 w-full md:w-auto">
+            {isEditing ? (
+              <>
+                <button
+                  onClick={() => { setIsEditing(false); setError(null); }}
+                  className="flex-1 md:flex-none px-5 py-2.5 rounded-lg text-[10px] font-bold text-text-sub border border-border-theme hover:bg-surface transition-all uppercase tracking-widest"
+                >
+                  Discard
+                </button>
+                <button
+                  onClick={saveAdjustment}
+                  disabled={loading}
+                  className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-primary text-white px-5 py-2.5 rounded-lg text-[10px] font-bold hover:bg-primary/90 disabled:opacity-50 uppercase tracking-widest transition-all"
+                >
+                  {loading
+                    ? <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    : <Save className="w-3.5 h-3.5" />}
+                  {user.role === 'ADMIN' ? 'Save' : 'Send request'}
+                </button>
+              </>
+            ) : (
+              <>
+                {showAdjust && (
+                  <button
+                    onClick={startAdjusting}
+                    className="flex-1 md:flex-none px-5 py-2.5 rounded-lg text-[10px] font-bold text-text-sub border border-border-theme hover:bg-surface transition-all uppercase tracking-widest"
+                  >
+                    Adjust
+                  </button>
+                )}
+                {showApprove && (
+                  <button
+                    onClick={approve}
+                    disabled={loading}
+                    className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-primary text-white px-6 py-2.5 rounded-lg text-[10px] font-bold hover:bg-primary/90 disabled:opacity-50 uppercase tracking-widest transition-all"
+                  >
+                    {loading
+                      ? <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      : <CheckCircle2 className="w-3.5 h-3.5" />}
+                    Approve
+                  </button>
+                )}
+                {!showApprove && !isStandard && status !== 'APPROVED' && status !== 'DISPUTE' && (
+                  <span className="text-[10px] font-bold text-text-sub italic bg-surface px-4 py-2.5 rounded-lg uppercase tracking-wider border border-border-theme">
+                    {statusLabel()}
+                  </span>
+                )}
+                {status === 'DISPUTE' && user.role !== 'ADMIN' && (
+                  <span className="text-[10px] font-bold text-error italic bg-error/5 px-4 py-2.5 rounded-lg uppercase tracking-wider border border-error/20 flex items-center gap-2">
+                    <AlertCircle className="w-3.5 h-3.5" /> Awaiting admin
+                  </span>
+                )}
+              </>
+            )}
+          </div>
         </div>
-      )}
+
+        {status === 'DISPUTE' && schedule && <DisputeChat scheduleId={schedule.id} user={user} />}
+      </div>
     </div>
   );
 }

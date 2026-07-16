@@ -1,20 +1,33 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# MomSub
 
-# Run and deploy your AI Studio app
+Nanny management platform for recurring schedules, weekly hour approvals, and
+dispute resolution between parents, nannies, and admins.
 
-This contains everything you need to run your app locally.
+## Run locally
 
-View your app in AI Studio: https://ai.studio/apps/592fc77c-8e5d-49a3-a682-a8045e77feb7
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
+**Prerequisites:** Node.js
 
 1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+   ```
+   npm install
+   ```
+2. Start the dev server:
+   ```
+   npm run dev
+   ```
+   The app runs at http://localhost:3000.
+
+## Useful scripts
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Start the local dev server |
+| `npm run build` | Production build to `dist/` |
+| `npm run lint` | Type-check with `tsc --noEmit` |
+| `npm run test:rules` | Run Firestore security-rules tests against the emulator |
+
+## Deploying Firestore security rules
+
+```
+firebase deploy --only firestore:rules
+```

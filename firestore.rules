@@ -90,32 +90,47 @@ service cloud.firestore {
         return isAdmin() || (isSignedIn() && (matchData.parentId == request.auth.uid || matchData.nannyId == request.auth.uid));
       }
 
+      // The STANDARD (recurring) schedule is the admin's. Parents and nannies adjust
+      // individual weeks; they must never be able to rewrite the pair's baseline.
+      function isStandard() { return existing().type == 'STANDARD'; }
+
       allow get: if canAccessSchedule(existing().matchId);
       allow list: if isAdmin() || (isSignedIn() && canAccessSchedule(resource.data.matchId));
-      allow create: if (isAdmin() || isSignedIn()) && isValidSchedule(incoming()) && (
-        isAdmin() || canAccessSchedule(incoming().matchId)
-      );
-      allow update: if (isAdmin() || isSignedIn()) && isValidSchedule(incoming()) && (
-        isAdmin() || canAccessSchedule(existing().matchId)
-      ) && (
-        // Terminal State Locking: Once APPROVED, only Admin can change it
-        (existing().status != 'APPROVED' || isAdmin())
-      ) && (
-        // Action: Change status
-        (incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt', 'updatedBy'])) ||
-        // Action: Full update
-        (incoming().diff(existing()).affectedKeys().hasAll(['totalHours', 'version', 'updatedAt', 'updatedBy']))
-      );
+
+      allow create: if isValidSchedule(incoming()) &&
+                    canAccessSchedule(incoming().matchId) &&
+                    (isAdmin() || incoming().type == 'WEEKLY');
+
+      allow update: if isValidSchedule(incoming()) &&
+                    canAccessSchedule(existing().matchId) &&
+                    // A schedule never moves to a different match.
+                    incoming().matchId == existing().matchId &&
+                    // Parents and nannies may only ever touch a single week, and may not
+                    // reclassify it. Admins may (needed to migrate legacy records).
+                    (isAdmin() || (!isStandard() && incoming().type == existing().type));
+
+      allow delete: if isAdmin();
 
       match /shifts/{shiftId} {
-        allow read: if canAccessSchedule(get(/databases/$(database)/documents/schedules/$(scheduleId)).data.matchId);
-        allow write: if isAdmin() || (isSignedIn() && canAccessSchedule(get(/databases/$(database)/documents/schedules/$(scheduleId)).data.matchId));
+        function parentSchedule() { return get(/databases/$(database)/documents/schedules/$(scheduleId)).data; }
+        // A week's first adjustment creates the schedule and its shifts in ONE batch, so
+        // at write time the parent schedule is not committed yet and get() would see
+        // nothing. getAfter() evaluates against the post-commit state, which is what we
+        // actually want to authorize against.
+        function parentScheduleAfter() { return getAfter(/databases/$(database)/documents/schedules/$(scheduleId)).data; }
+
+        allow read: if canAccessSchedule(parentSchedule().matchId);
+        // Shifts on the recurring schedule are admin-only, same as the schedule itself.
+        allow write: if canAccessSchedule(parentScheduleAfter().matchId) &&
+                     (isAdmin() || parentScheduleAfter().type == 'WEEKLY');
       }
 
       match /approvals/{approvalId} {
         allow read: if canAccessSchedule(get(/databases/$(database)/documents/schedules/$(scheduleId)).data.matchId);
-        allow create: if isSignedIn() && isValidId(scheduleId) && 
-                      canAccessSchedule(get(/databases/$(database)/documents/schedules/$(scheduleId)).data.matchId) &&
+        // getAfter for the same reason as shifts: the approval that records a week's first
+        // adjustment is batched with the creation of the schedule it belongs to.
+        allow create: if isSignedIn() && isValidId(scheduleId) &&
+                      canAccessSchedule(getAfter(/databases/$(database)/documents/schedules/$(scheduleId)).data.matchId) &&
                       isValidApproval(incoming());
       }
 

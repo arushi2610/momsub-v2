@@ -6,10 +6,12 @@ import { Plus, Users, LayoutDashboard, AlertCircle, CheckCircle2, ChevronRight, 
 import UserForm from './UserForm';
 import MatchForm from './MatchForm';
 import SystemAuditLog from './SystemAuditLog';
-import ScheduleCard from './ScheduleCard';
+import WeekNavigator from './WeekNavigator';
+import StandardScheduleEditor from './StandardScheduleEditor';
 import MatchChat from './MatchChat';
 import { motion, AnimatePresence } from 'motion/react';
 import { formatHours, isScheduleArchivable } from '../lib/utils';
+import { formatWeekRangeLong } from '../lib/week';
 
 interface AdminDashboardProps {
   admin: User;
@@ -375,27 +377,39 @@ export default function AdminDashboard({ admin }: AdminDashboardProps) {
                  </button>
               </div>
 
-              {selectedUser.role !== 'ADMIN' && (
-                 <div>
-                    <h3 className="text-lg font-black text-text-main mb-4 tracking-tight uppercase">Schedule History</h3>
-                    <div className="space-y-4">
-                      {schedules.filter(s => {
-                         const userMatches = matches.filter(m => m.parentId === selectedUser.id || m.nannyId === selectedUser.id).map(m => m.id);
-                         return userMatches.includes(s.matchId);
-                      }).length === 0 ? (
-                        <p className="text-sm font-bold text-text-sub italic">No schedules found for this user.</p>
-                      ) : (
-                        schedules.filter(s => {
-                           const userMatches = matches.filter(m => m.parentId === selectedUser.id || m.nannyId === selectedUser.id).map(m => m.id);
-                           return userMatches.includes(s.matchId);
-                        }).sort((a,b) => String(b.weekStartDate || '').localeCompare(String(a.weekStartDate || ''))).map(s => {
-                           const sMatch = matches.find(m => m.id === s.matchId) || matches[0];
-                           return <ScheduleCard key={s.id} schedule={s} user={admin} match={sMatch} />
-                        })
-                      )}
-                    </div>
-                 </div>
-              )}
+              {selectedUser.role !== 'ADMIN' && (() => {
+                 const userMatchIds = matches
+                   .filter(m => m.parentId === selectedUser.id || m.nannyId === selectedUser.id)
+                   .map(m => m.id);
+                 const adjusted = schedules
+                   .filter(s => userMatchIds.includes(s.matchId) && s.type === 'WEEKLY')
+                   .sort((a, b) => String(b.weekStartDate || '').localeCompare(String(a.weekStartDate || '')));
+
+                 return (
+                   <div>
+                      <h3 className="text-lg font-black text-text-main mb-4 tracking-tight uppercase">Adjusted Weeks</h3>
+                      <div className="space-y-2">
+                        {adjusted.length === 0 ? (
+                          <p className="text-sm font-bold text-text-sub italic">
+                            No adjustments — every week is still on the recurring schedule.
+                          </p>
+                        ) : (
+                          adjusted.map(s => (
+                            <div key={s.id} className="flex items-center justify-between p-3 bg-white rounded-lg border border-border-theme">
+                              <div>
+                                <p className="text-xs font-bold text-text-main">{formatWeekRangeLong(s.weekStartDate)}</p>
+                                <p className="text-[10px] text-text-sub uppercase tracking-widest">
+                                  {s.status.replace('_', ' ').toLowerCase()} · adjusted {s.adjustmentsCount || 1}x
+                                </p>
+                              </div>
+                              <span className="text-sm font-bold text-text-main font-mono italic">{formatHours(s.totalHours)}h</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                   </div>
+                 );
+              })()}
            </div>
         )}
 
@@ -599,43 +613,46 @@ export default function AdminDashboard({ admin }: AdminDashboardProps) {
                   )}
                 </div>
                 
-                {!showHistoryForMatch ? (
-                  <ScheduleCard 
-                    schedule={selectedSchedule} 
-                    user={admin} 
-                    match={matches.find(m => m.id === selectedSchedule.matchId)!} 
-                    onRefresh={() => { setSelectedSchedule(null); setShowHistoryForMatch(null); }}
-                    onNavigateWeek={(dir, targetWeek) => {
-                       const matchSchedules = schedules.filter(s => s.matchId === selectedSchedule.matchId);
-                       const targetSchedule = matchSchedules.find(s => s.weekStartDate === targetWeek && s.type !== 'STANDARD');
-                       if (targetSchedule) {
-                          setSelectedSchedule(targetSchedule);
-                       } else {
-                          const standardSchedule = matchSchedules.find(s => s.type === 'STANDARD');
-                          if (standardSchedule) {
-                             setSelectedSchedule(null);
-                             setTimeout(() => {
-                                setSelectedSchedule(standardSchedule);
-                             }, 0);
-                          }
-                       }
-                    }}
-                  />
-                ) : (
-                  <div className="space-y-4">
-                     {schedules.filter(s => s.matchId === selectedSchedule.matchId && s.id !== selectedSchedule.id).sort((a,b) => (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0)).map(s => (
-                        <ScheduleCard 
-                          key={s.id}
-                          schedule={s} 
-                          user={admin} 
-                          match={matches.find(m => m.id === selectedSchedule.matchId)!} 
-                        />
-                     ))}
-                     {schedules.filter(s => s.matchId === selectedSchedule.matchId && s.id !== selectedSchedule.id).length === 0 && (
-                        <div className="p-8 text-center text-text-sub italic text-sm">No other history found.</div>
-                     )}
-                  </div>
-                )}
+                {(() => {
+                  const activeMatch = matches.find(m => m.id === selectedSchedule.matchId);
+                  if (!activeMatch) {
+                    return <div className="p-8 text-center text-text-sub italic text-sm">This match no longer exists.</div>;
+                  }
+
+                  if (showHistoryForMatch) {
+                    const history = schedules
+                      .filter(s => s.matchId === activeMatch.id && s.type === 'WEEKLY')
+                      .sort((a, b) => String(b.weekStartDate || '').localeCompare(String(a.weekStartDate || '')));
+                    return (
+                      <div className="space-y-2">
+                        {history.length === 0 ? (
+                          <div className="p-8 text-center text-text-sub italic text-sm">
+                            No week has been adjusted yet — every week is still on the recurring schedule.
+                          </div>
+                        ) : (
+                          history.map(s => (
+                            <div key={s.id} className="flex items-center justify-between p-3 bg-white rounded-lg border border-border-theme">
+                              <div>
+                                <p className="text-xs font-bold text-text-main">{formatWeekRangeLong(s.weekStartDate)}</p>
+                                <p className="text-[10px] text-text-sub uppercase tracking-widest">
+                                  {s.status.replace('_', ' ').toLowerCase()} · adjusted {s.adjustmentsCount || 1}x
+                                </p>
+                              </div>
+                              <span className="text-sm font-bold text-text-main font-mono italic">{formatHours(s.totalHours)}h</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-6">
+                      <StandardScheduleEditor match={activeMatch} admin={admin} />
+                      <WeekNavigator match={activeMatch} user={admin} />
+                    </div>
+                  );
+                })()}
               </div>
             </motion.div>
           </div>

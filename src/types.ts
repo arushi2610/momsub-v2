@@ -23,12 +23,19 @@ export interface Match {
 }
 
 export type ScheduleStatus = 'PENDING_NANNY' | 'PENDING_PARENT' | 'APPROVED' | 'DISPUTE';
-export type ScheduleType = 'STANDARD' | 'WEEKLY_PLANNED' | 'WEEKLY_ACTUAL';
+
+// STANDARD: the recurring schedule for a pair. Admin-owned, has no weekStartDate,
+//   and populates every week that has no WEEKLY record of its own.
+// WEEKLY: one week that has been adjusted away from the standard. Exactly one per
+//   week per match — it is that week's CURRENT schedule.
+// WEEKLY_SUPERSEDED: a duplicate week left over from the old model, kept for the
+//   record but ignored everywhere. Only the migration produces these.
+export type ScheduleType = 'STANDARD' | 'WEEKLY' | 'WEEKLY_SUPERSEDED';
 
 export interface WeeklySchedule {
   id: string;
   matchId: string;
-  weekStartDate: string; // YYYY-MM-DD
+  weekStartDate: string; // YYYY-MM-DD, always a Monday. Absent on STANDARD.
   type: ScheduleType;
   status: ScheduleStatus;
   totalHours: number;
@@ -38,6 +45,20 @@ export interface WeeklySchedule {
   updatedAt: any;
   updatedBy: string;
   explanation?: string;
+}
+
+/**
+ * What a given week actually looks like. If no WEEKLY record exists the week is
+ * still fully defined — it inherits the pair's STANDARD schedule — so the UI
+ * always has something to show and something to adjust.
+ */
+export interface WeekView {
+  weekStartDate: string;
+  matchId: string;
+  schedule: WeeklySchedule | null; // null while the week is still the plain standard
+  shifts: Shift[];
+  isStandard: boolean; // true = inherited, never adjusted
+  locked: boolean; // past the 7-day-after-Sunday deadline
 }
 
 export interface Shift {

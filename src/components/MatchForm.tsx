@@ -81,10 +81,12 @@ export default function MatchForm({ users, onClose }: MatchFormProps) {
       const scheduleRef = doc(collection(db, 'schedules'));
       const totalHours = calculateTotalHours(shifts);
       
+      // The recurring baseline is set by the admin, so it needs no approval. Weeks
+      // inherit it until someone adjusts that specific week.
       batch.set(scheduleRef, {
         matchId: matchRef.id,
         type: 'STANDARD',
-        status: 'PENDING_NANNY',
+        status: 'APPROVED',
         totalHours,
         version: 1,
         updatedAt: serverTimestamp(),
