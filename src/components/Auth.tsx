@@ -12,6 +12,7 @@ import { doc, getDoc, setDoc, serverTimestamp, collection, query, where, getDocs
 import { LogIn, ShieldCheck, Users, Calendar, Mail, Lock, ArrowLeft, UserPlus, Fingerprint } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { validateEmail, validatePassword } from '../lib/utils';
+import logo from '../assets/logo.jpg';
 
 export default function Auth() {
   const [loading, setLoading] = useState(false);
@@ -204,8 +205,7 @@ export default function Auth() {
         <div className="min-h-screen bg-white flex flex-col items-center justify-center p-4 md:p-8">
            <div className="w-full max-w-sm md:max-w-lg">
               <div className="flex flex-col items-center gap-2 mb-12">
-                 <div className="w-16 h-16 bg-primary rounded-2xl flex items-center justify-center text-white font-black text-3xl shadow-lg">M</div>
-                 <span className="text-4xl font-black italic tracking-tighter text-text-main">MomSub</span>
+                 <img src={logo} alt="MomSub" className="h-16 md:h-20 w-auto" />
               </div>
               <div className="mb-10 text-center">
                  <h2 className="text-2xl font-bold text-text-main tracking-tight mb-2">Select your role to continue</h2>
@@ -259,8 +259,7 @@ export default function Auth() {
         </button>
 
         <div className="flex flex-col items-center gap-2 mb-8">
-           <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white font-black text-xl shadow-sm ${selectedRole === 'ADMIN' ? 'bg-error' : selectedRole === 'NANNY' ? 'bg-success' : 'bg-primary'}`}>M</div>
-           <span className="text-3xl font-black italic tracking-tighter text-text-main">MomSub</span>
+           <img src={logo} alt="MomSub" className="h-12 md:h-14 w-auto" />
            <span className="text-[10px] font-bold text-text-sub uppercase tracking-widest bg-surface px-2 py-0.5 rounded-full mt-2">{selectedRole} LOGIN</span>
         </div>
 

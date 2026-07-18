@@ -6,6 +6,7 @@ import { collection, query, where, onSnapshot, updateDoc, doc, orderBy } from 'f
 import { updateEmail } from 'firebase/auth';
 import { Notification } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
+import logo from '../assets/logo.jpg';
 
 interface NavbarProps {
   user: User;
@@ -102,8 +103,7 @@ export default function Navbar({ user }: NavbarProps) {
     <nav className="fixed top-0 left-0 right-0 h-16 bg-white border-b border-border-theme z-40 md:z-50">
       <div className="max-w-7xl mx-auto h-full px-4 md:px-8 flex items-center justify-between">
         <div className="flex items-center gap-1.5 md:gap-2.5">
-          <div className="w-7 h-7 md:w-8 md:h-8 bg-primary rounded-lg flex items-center justify-center text-white font-black text-sm md:text-lg">M</div>
-          <span className="text-lg md:text-xl font-extrabold text-primary tracking-tight hidden sm:inline">MomSub</span>
+          <img src={logo} alt="MomSub" className="h-8 md:h-10 w-auto" />
           <div className="hidden lg:flex items-center gap-2 px-3 py-0.5 bg-primary-soft text-primary rounded-full ml-4">
             <span className="text-[10px] font-bold uppercase tracking-wider">
               {user.role}

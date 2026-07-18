@@ -4,6 +4,7 @@ import { auth } from '../lib/firebase';
 import { Lock, ArrowLeft, CheckCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { validatePassword } from '../lib/utils';
+import logo from '../assets/logo.jpg';
 
 interface PasswordResetProps {
   oobCode: string;
@@ -108,10 +109,7 @@ export default function PasswordReset({ oobCode, onComplete }: PasswordResetProp
         </button>
 
         <div className="flex flex-col items-center gap-2 mb-8">
-          <div className="w-12 h-12 rounded-xl flex items-center justify-center text-white font-black text-xl shadow-sm bg-primary">
-            M
-          </div>
-          <span className="text-3xl font-black italic tracking-tighter text-text-main">MomSub</span>
+          <img src={logo} alt="MomSub" className="h-12 md:h-14 w-auto" />
           <span className="text-[10px] font-bold text-text-sub uppercase tracking-widest bg-surface px-2 py-0.5 rounded-full mt-2">
             Reset Password
           </span>
