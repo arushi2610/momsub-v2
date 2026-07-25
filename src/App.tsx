@@ -9,6 +9,7 @@ import AdminDashboard from './components/AdminDashboard';
 import ParentDashboard from './components/ParentDashboard';
 import NannyDashboard from './components/NannyDashboard';
 import Navbar from './components/Navbar';
+import Legal from './components/Legal';
 import { Loader2 } from 'lucide-react';
 
 export default function App() {
@@ -96,6 +97,13 @@ export default function App() {
     };
   }, []);
 
+  // Public legal pages, reachable without signing in. Firebase Hosting rewrites all
+  // paths to index.html, and Vite's dev server serves the SPA fallback, so /privacy
+  // and /terms load the app and are resolved here.
+  const path = window.location.pathname.replace(/\/+$/, '');
+  if (path === '/privacy') return <Legal page="privacy" />;
+  if (path === '/terms') return <Legal page="terms" />;
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-white">
@@ -129,6 +137,7 @@ export default function App() {
         {user.role === 'PARENT' && <ParentDashboard parent={user} />}
         {user.role === 'NANNY' && <NannyDashboard nanny={user} />}
       </main>
+      {/* Legal footer links hidden until Privacy/Terms placeholders are filled in. */}
       {/* Bottom nav for mobile */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-border-theme md:hidden z-40 flex items-center justify-around h-16">
         <div className="flex-1 flex flex-col items-center justify-center py-2 text-primary border-t-2 border-primary">

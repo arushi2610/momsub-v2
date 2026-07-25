@@ -492,6 +492,7 @@ export default function Auth() {
               </>
             )}
           </button>
+          {/* Legal footer links hidden until Privacy/Terms placeholders are filled in. */}
         </div>
       </div>
   );
