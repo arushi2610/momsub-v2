@@ -30,45 +30,84 @@ export default function Auth() {
   const [failedAttempts, setFailedAttempts] = useState(0);
   const [isLocked, setIsLocked] = useState(false);
 
-  const syncUserRecord = async (firebaseUser: any) => {
-    let userRef = doc(db, 'users', firebaseUser.uid);
-    let userDoc = await getDoc(userRef);
-    
-    if (!userDoc.exists()) {
-      // Fallback: Check if there's a record with this email (created by admin)
-      const q = query(collection(db, 'users'), where('email', '==', firebaseUser.email?.toLowerCase()));
-      const querySnapshot = await getDocs(q);
-      
-      if (!querySnapshot.empty) {
-        const existingDoc = querySnapshot.docs[0];
-        const userData = existingDoc.data();
-        
-        await setDoc(userRef, {
-          ...userData,
-          uid: firebaseUser.uid,
-          updatedAt: serverTimestamp(),
-          role: selectedRole || userData.role || 'PARENT'
-        });
-        
-        if (existingDoc.id !== firebaseUser.uid) {
-          await deleteDoc(doc(db, 'users', existingDoc.id));
-        }
-      } else if (mode === 'REGISTER' || selectedRole) {
-        // Self registration with the selected role
-        await setDoc(userRef, {
-          email: firebaseUser.email,
-          name: firebaseUser.displayName || fullName || 'User',
-          phone: phone || undefined,
-          role: selectedRole || 'PARENT',
-          createdAt: serverTimestamp()
-        });
-      } else {
-        await auth.signOut();
-        throw new Error("Account not found. Please sign up.");
+  /**
+   * Verifies the admin access code. The write below is only permitted by the
+   * security rules when the submitted code matches the one stored in config/admin,
+   * a document no browser can read. So a successful write IS the proof — the code
+   * is never compared in the browser and never ships in the page source.
+   */
+  const verifyAdminCode = async (firebaseUser: any) => {
+    try {
+      await setDoc(doc(db, 'admin_verifications', firebaseUser.uid), {
+        code: adminCode.trim(),
+        verifiedAt: serverTimestamp(),
+      });
+    } catch {
+      const attempts = failedAttempts + 1;
+      setFailedAttempts(attempts);
+      if (attempts >= 5) {
+        setIsLocked(true);
+        setTimeout(() => {
+          setIsLocked(false);
+          setFailedAttempts(0);
+        }, 5 * 60 * 1000);
       }
-    } else {
-      // User already exists — role is immutable, no update needed
+      await auth.signOut();
+      throw new Error(`Invalid admin access code. (${attempts}/5 attempts)`);
     }
+  };
+
+  const syncUserRecord = async (firebaseUser: any) => {
+    const userRef = doc(db, 'users', firebaseUser.uid);
+    const userDoc = await getDoc(userRef);
+
+    // Already set up. Role is immutable here — only an admin can change it.
+    if (userDoc.exists()) return;
+
+    const emailKey = (firebaseUser.email || '').toLowerCase();
+
+    // Did an admin already add this person? That record lives under its own id
+    // (the email, or a random id for older records), so it is found by email.
+    const q = query(collection(db, 'users'), where('email', '==', emailKey));
+    const existing = await getDocs(q);
+
+    if (!existing.empty) {
+      const placeholder = existing.docs[0];
+      const userData = placeholder.data();
+
+      // The role the ADMIN assigned always wins. Never the role picked on the
+      // sign-in screen, or anyone could choose ADMIN and escalate themselves.
+      await setDoc(userRef, {
+        ...userData,
+        email: emailKey,
+        uid: firebaseUser.uid,
+        role: userData.role || 'PARENT',
+        updatedAt: serverTimestamp(),
+      });
+
+      if (placeholder.id !== firebaseUser.uid) {
+        await deleteDoc(doc(db, 'users', placeholder.id));
+      }
+      return;
+    }
+
+    if (mode !== 'REGISTER' && !selectedRole) {
+      await auth.signOut();
+      throw new Error('Account not found. Please sign up.');
+    }
+
+    // Self-registration. ADMIN only survives here if verifyAdminCode() already
+    // proved the access code on the server — the rules reject it otherwise.
+    const record: Record<string, any> = {
+      email: emailKey,
+      name: firebaseUser.displayName || fullName || 'User',
+      role: selectedRole === 'ADMIN' ? 'ADMIN' : selectedRole === 'NANNY' ? 'NANNY' : 'PARENT',
+      createdAt: serverTimestamp(),
+    };
+    // Firestore rejects undefined values outright, so only set phone when given.
+    if (phone && phone.trim()) record.phone = phone.trim();
+
+    await setDoc(userRef, record);
   };
 
   const handleEmailAuth = async (e: React.FormEvent) => {
@@ -92,17 +131,8 @@ export default function Auth() {
       return;
     }
 
-    if (selectedRole === 'ADMIN' && adminCode !== 'HAPPYMOM20') {
-      const newAttempts = failedAttempts + 1;
-      setFailedAttempts(newAttempts);
-      if (newAttempts >= 5) {
-        setIsLocked(true);
-        setTimeout(() => {
-          setIsLocked(false);
-          setFailedAttempts(0);
-        }, 5 * 60 * 1000);
-      }
-      setError(`Invalid admin access code. (${newAttempts}/5 attempts)`);
+    if (selectedRole === 'ADMIN' && !adminCode.trim()) {
+      setError('Please enter your admin access code.');
       return;
     }
 
@@ -113,9 +143,13 @@ export default function Auth() {
         if (fullName) {
           await updateProfile(result.user, { displayName: fullName });
         }
+        // Must run before the user record is written: the rules only allow an
+        // ADMIN record once this verification exists.
+        if (selectedRole === 'ADMIN') await verifyAdminCode(result.user);
         await syncUserRecord(result.user);
       } else {
         const result = await signInWithEmailAndPassword(auth, email, password);
+        if (selectedRole === 'ADMIN') await verifyAdminCode(result.user);
         await syncUserRecord(result.user);
       }
     } catch (err: any) {
@@ -126,6 +160,8 @@ export default function Auth() {
         setError('Invalid email or password. Please try again.');
       } else if (err.code === 'auth/operation-not-allowed') {
         setError('Email/Password sign-in is not enabled. Please enable it in Firebase Console.');
+      } else if (err.code === 'permission-denied' || /insufficient permissions/i.test(err.message || '')) {
+        setError("This account isn't set up to sign in yet. Please ask your MomSub admin to add you, then try again.");
       } else {
         setError(err.message || "Authentication failed.");
         const newAttempts = failedAttempts + 1;
@@ -175,6 +211,8 @@ export default function Auth() {
       provider.addScope('profile');
       provider.addScope('email');
       const result = await signInWithPopup(auth, provider);
+      // Google sign-in is no shortcut around the access code.
+      if (selectedRole === 'ADMIN') await verifyAdminCode(result.user);
       await syncUserRecord(result.user);
     } catch (err: any) {
       console.error('Google sign-in error:', err);

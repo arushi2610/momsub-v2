@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { db } from '../lib/firebase';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { X, UserPlus, Mail, Phone, User as UserIcon } from 'lucide-react';
 import { motion } from 'motion/react';
 import { UserRole } from '../types';
@@ -42,17 +42,19 @@ export default function UserForm({ onClose }: UserFormProps) {
 
     setLoading(true);
     try {
-      const usersRef = collection(db, 'users');
-      // Use addDoc to let Firestore handle ID generation
-      await addDoc(usersRef, {
-        email: formData.email.toLowerCase(),
+      const emailKey = formData.email.trim().toLowerCase();
+      // Key the record by email, not a random id. The person has no account yet, so
+      // their future login id is unknown — the email is the only stable handle, and
+      // the security rules read this exact path to authorize an ADMIN sign-up.
+      await setDoc(doc(db, 'users', emailKey), {
+        email: emailKey,
         name: formData.name,
         phone: formData.phone,
         role: formData.role,
         createdAt: serverTimestamp(),
         isActive: true
       });
-      
+
       onClose();
     } catch (err: any) {
       console.error(err);
@@ -137,10 +139,11 @@ export default function UserForm({ onClose }: UserFormProps) {
 
             <div>
               <label className="text-[10px] font-bold text-text-sub uppercase tracking-widest mb-1.5 block">User Role</label>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 {[
                   { id: 'PARENT', label: 'Parent' },
-                  { id: 'NANNY', label: 'Nanny' }
+                  { id: 'NANNY', label: 'Nanny' },
+                  { id: 'ADMIN', label: 'Admin' }
                 ].map(r => (
                   <button
                     key={r.id}

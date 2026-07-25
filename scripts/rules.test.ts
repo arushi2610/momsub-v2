@@ -4,7 +4,7 @@ import {
   assertSucceeds,
   RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
-import { doc, setDoc, updateDoc, getDoc, collection, writeBatch, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, getDoc, getDocs, deleteDoc, query, where, collection, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { readFileSync } from 'fs';
 
 const PROJECT = 'momsub-rules-test';
@@ -51,10 +51,10 @@ async function main() {
     await setDoc(doc(db, 'schedules', WEEK), scheduleFields({ type: 'WEEKLY', status: 'APPROVED', weekStartDate: '2026-07-06' }));
   });
 
-  const parent = env.authenticatedContext(PARENT).firestore();
-  const nanny = env.authenticatedContext(NANNY).firestore();
-  const admin = env.authenticatedContext(ADMIN).firestore();
-  const stranger = env.authenticatedContext(STRANGER).firestore();
+  const parent = env.authenticatedContext(PARENT, { email: 'p@x.com' }).firestore();
+  const nanny = env.authenticatedContext(NANNY, { email: 'n@x.com' }).firestore();
+  const admin = env.authenticatedContext(ADMIN, { email: 'a@x.com' }).firestore();
+  const stranger = env.authenticatedContext(STRANGER, { email: 's@x.com' }).firestore();
 
   // --- THE CORE FLOW: parent adjusts a week that has never been adjusted. The schedule,
   // its shifts and the approval record are all created in a SINGLE batch. This is what
@@ -101,6 +101,112 @@ async function main() {
   await expectDeny('unrelated user reads a schedule', getDoc(doc(stranger, 'schedules', STD)));
   await expectDeny('unrelated user adjusts a week',
     updateDoc(doc(stranger, 'schedules', WEEK), { status: 'APPROVED', totalHours: 8, version: 6, updatedAt: serverTimestamp(), updatedBy: STRANGER }));
+
+  // ===================== SIGN-UP / ACCOUNT CREATION =====================
+  // The outage: nobody could create an account at all. These lock that shut.
+
+  // An admin pre-created records for two people who have not signed up yet. New
+  // records are keyed by email, which is what the ADMIN pre-authorization reads.
+  await env.withSecurityRulesDisabled(async ctx => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, 'users', 'dina@x.com'), {
+      email: 'dina@x.com', name: 'Dina', role: 'PARENT', createdAt: new Date(),
+    });
+    await setDoc(doc(db, 'users', 'reeva@x.com'), {
+      email: 'reeva@x.com', name: 'Reeva', role: 'ADMIN', createdAt: new Date(),
+    });
+  });
+
+  // Brand new sign-ups: authenticated, but with no user record of their own yet.
+  const dina = env.authenticatedContext('dina-uid', { email: 'dina@x.com' }).firestore();
+  const reeva = env.authenticatedContext('reeva-uid', { email: 'reeva@x.com' }).firestore();
+  const walkin = env.authenticatedContext('walkin-uid', { email: 'walkin@x.com' }).firestore();
+
+  const newUser = (over: any = {}) => ({
+    email: 'walkin@x.com', name: 'Walk In', role: 'PARENT', createdAt: serverTimestamp(), ...over,
+  });
+
+  // THE OUTAGE ITSELF — this was denied before, which is why nobody could sign up.
+  await expectAllow('brand-new person creates their own PARENT record',
+    setDoc(doc(walkin, 'users', 'walkin-uid'), newUser()));
+
+  const walkin2 = env.authenticatedContext('walkin2-uid', { email: 'walkin2@x.com' }).firestore();
+  await expectAllow('brand-new person creates their own NANNY record',
+    setDoc(doc(walkin2, 'users', 'walkin2-uid'),
+      newUser({ email: 'walkin2@x.com', name: 'Walk In 2', role: 'NANNY' })));
+
+  // Having signed up as a PARENT, they must not be able to re-write their own role.
+  await expectDeny('user changes their OWN role after signup',
+    setDoc(doc(walkin, 'users', 'walkin-uid'), newUser({ role: 'NANNY' })));
+
+  // Dina finds the record the admin pre-created for her, by her own email.
+  await expectAllow('new user queries users by their OWN email',
+    getDocs(query(collection(dina, 'users'), where('email', '==', 'dina@x.com'))));
+  // ...but must not be able to enumerate every family's contact details.
+  await expectDeny('new user lists ALL users',
+    getDocs(collection(dina, 'users')));
+  await expectDeny('new user queries someone ELSE\'s email',
+    getDocs(query(collection(dina, 'users'), where('email', '==', 'p@x.com'))));
+
+  // Privilege escalation: the whole reason open sign-up is safe.
+  await expectDeny('walk-in self-assigns ADMIN at signup',
+    setDoc(doc(walkin, 'users', 'walkin-uid'), newUser({ role: 'ADMIN' })));
+  await expectDeny('walk-in creates a record under someone else\'s id',
+    setDoc(doc(walkin, 'users', 'someone-else'), newUser()));
+  await expectDeny('parent promotes THEMSELVES to ADMIN',
+    updateDoc(doc(parent, 'users', PARENT), { email: 'p@x.com', name: 'Parent', role: 'ADMIN', createdAt: new Date() }));
+
+  // ---- ADMIN ACCESS CODE (server-enforced) ----
+  await env.withSecurityRulesDisabled(async ctx => {
+    await setDoc(doc(ctx.firestore(), 'config', 'admin'), { code: 'REAL-SECRET-CODE' });
+  });
+
+  const coder = env.authenticatedContext('coder-uid', { email: 'coder@x.com' }).firestore();
+
+  // The code itself must be unreachable from any client, or it is not a secret.
+  await expectDeny('client reads the admin code',
+    getDoc(doc(coder, 'config', 'admin')));
+  await expectDeny('client overwrites the admin code',
+    setDoc(doc(coder, 'config', 'admin'), { code: 'hacked' }));
+
+  // Verification succeeds only with the true code.
+  await expectDeny('wrong admin code is rejected',
+    setDoc(doc(coder, 'admin_verifications', 'coder-uid'), { code: 'GUESS', verifiedAt: serverTimestamp() }));
+  // ...and without it, no ADMIN record can be created.
+  await expectDeny('ADMIN signup without verifying the code',
+    setDoc(doc(coder, 'users', 'coder-uid'), newUser({ email: 'coder@x.com', role: 'ADMIN' })));
+
+  await expectAllow('correct admin code verifies',
+    setDoc(doc(coder, 'admin_verifications', 'coder-uid'), { code: 'REAL-SECRET-CODE', verifiedAt: serverTimestamp() }));
+  await expectDeny('verification cannot be read back',
+    getDoc(doc(coder, 'admin_verifications', 'coder-uid')));
+  // Having proven the code, ADMIN signup is now permitted.
+  await expectAllow('ADMIN signup AFTER verifying the code',
+    setDoc(doc(coder, 'users', 'coder-uid'), newUser({ email: 'coder@x.com', role: 'ADMIN' })));
+
+  // Nobody can forge a verification for someone else.
+  await expectDeny('forging a verification for another user',
+    setDoc(doc(walkin, 'admin_verifications', 'coder-uid'), { code: 'REAL-SECRET-CODE' }));
+
+  // Reeva was pre-authorized as ADMIN by a real admin, so her claim is allowed.
+  await expectAllow('pre-authorized ADMIN claims their account',
+    setDoc(doc(reeva, 'users', 'reeva-uid'), {
+      email: 'reeva@x.com', name: 'Reeva', role: 'ADMIN', createdAt: new Date(),
+    }));
+
+  // Admin powers.
+  await expectAllow('admin creates another ADMIN',
+    setDoc(doc(admin, 'users', 'newadmin@x.com'), {
+      email: 'newadmin@x.com', name: 'New Admin', role: 'ADMIN', createdAt: new Date(),
+    }));
+  await expectAllow('admin promotes an existing parent to ADMIN',
+    updateDoc(doc(admin, 'users', PARENT), { email: 'p@x.com', name: 'Parent', role: 'ADMIN', createdAt: new Date() }));
+
+  // Claiming removes the leftover placeholder record.
+  await expectAllow('user deletes the placeholder holding their own email',
+    deleteDoc(doc(dina, 'users', 'dina@x.com')));
+  await expectDeny('user deletes someone else\'s record',
+    deleteDoc(doc(walkin, 'users', NANNY)));
 
   await env.cleanup();
   console.log(fails === 0 ? '\nAll rules checks passed.' : `\n${fails} FAILED`);

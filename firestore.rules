@@ -52,13 +52,74 @@ service cloud.firestore {
     // SECURITY RULES
     // -------------------------------------------------------------------------
 
+    // -------------------------------------------------------------------------
+    // ADMIN ACCESS CODE
+    //
+    // The real code lives in config/admin. No client may read or write anything
+    // here — but security rules CAN read it internally, and that asymmetry is what
+    // makes the check impossible to bypass or to lift out of the page source.
+    // -------------------------------------------------------------------------
+    match /config/{docId} {
+      allow read, write: if false;
+    }
+
+    // Proof that a user typed the correct admin access code. The write below only
+    // succeeds when the submitted code matches config/admin, so a successful write
+    // IS the verification. Reads are denied, so the stored code can never leak.
+    match /admin_verifications/{userId} {
+      allow read: if false;
+      allow write: if isSignedIn() &&
+                   userId == request.auth.uid &&
+                   request.resource.data.code ==
+                     get(/databases/$(database)/documents/config/admin).data.code;
+    }
+
     match /users/{userId} {
+      // The signed-in user's own email, normalized. Used to let someone claim the
+      // record an admin pre-created for them.
+      function myEmail() { return request.auth.token.email.lower(); }
+
+      // Did this person prove they know the admin access code?
+      function verifiedAdminCode() {
+        return exists(/databases/$(database)/documents/admin_verifications/$(request.auth.uid));
+      }
+
+      // True when an admin has already created a record keyed by this person's email
+      // and marked it ADMIN — the other way in, for people an admin adds directly
+      // from the dashboard.
+      function adminPreAuthorized() {
+        return exists(/databases/$(database)/documents/users/$(myEmail())) &&
+               get(/databases/$(database)/documents/users/$(myEmail())).data.role == 'ADMIN';
+      }
+
       allow get: if isSignedIn();
-      allow list: if isAdmin();
-      allow create: if isAdmin() && isValidUser(incoming());
-      allow update: if (isAdmin() || (isSignedIn() && userId == request.auth.uid)) && 
-                     isValidUser(incoming()) && 
-                     incoming().role == existing().role; // Role is immutable for users
+
+      // Admins list everyone. Anyone else may only run a query that returns their
+      // own record — needed at sign-up to find the record an admin pre-created.
+      // Firestore enforces this per returned document, so a broader query fails.
+      allow list: if isAdmin() || (isSignedIn() && resource.data.email == myEmail());
+
+      // Anyone signed in may create their OWN record as PARENT or NANNY.
+      // Becoming an ADMIN additionally requires either proving the admin access
+      // code, or having been added as an admin from the dashboard. The browser
+      // cannot fake either one.
+      allow create: if isValidUser(incoming()) && (
+                      isAdmin() ||
+                      (isSignedIn() && userId == request.auth.uid &&
+                        (incoming().role != 'ADMIN' ||
+                         verifiedAdminCode() ||
+                         adminPreAuthorized()))
+                    );
+
+      // Admins may change anyone's role (that is how someone is promoted to ADMIN).
+      // A user editing their own profile may never change their own role.
+      allow update: if (isAdmin() || (isSignedIn() && userId == request.auth.uid)) &&
+                     isValidUser(incoming()) &&
+                     (isAdmin() || incoming().role == existing().role);
+
+      // After a pre-created record is claimed, the placeholder (random-ID) copy is
+      // removed. Only an admin, or the person whose email it is, may do that.
+      allow delete: if isAdmin() || (isSignedIn() && existing().email == myEmail());
     }
 
     match /parent_profiles/{profileId} {
