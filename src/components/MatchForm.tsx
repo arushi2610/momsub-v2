@@ -20,8 +20,10 @@ export default function MatchForm({ users, onClose }: MatchFormProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const parents = users.filter(u => u.role === 'PARENT').sort((a, b) => a.name.localeCompare(b.name));
-  const nannies = users.filter(u => u.role === 'NANNY').sort((a, b) => a.name.localeCompare(b.name));
+  // Archived users can't be matched.
+  const active = users.filter(u => u.status !== 'ARCHIVED');
+  const parents = active.filter(u => u.role === 'PARENT').sort((a, b) => a.name.localeCompare(b.name));
+  const nannies = active.filter(u => u.role === 'NANNY').sort((a, b) => a.name.localeCompare(b.name));
 
   const addShift = () => {
     if (shifts.length >= 10) return;

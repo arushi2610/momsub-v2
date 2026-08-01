@@ -7,6 +7,8 @@ export interface User {
   role: UserRole;
   phone?: string;
   requestedHours?: number;
+  // Missing status is treated as ACTIVE everywhere — existing records predate this field.
+  status?: 'ACTIVE' | 'ARCHIVED';
   createdAt: any;
 }
 

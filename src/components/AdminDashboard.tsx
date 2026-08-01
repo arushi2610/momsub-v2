@@ -37,6 +37,46 @@ export default function AdminDashboard({ admin }: AdminDashboardProps) {
   const [streamSearchTerm, setStreamSearchTerm] = useState('');
   const [openMatchMenu, setOpenMatchMenu] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<{ type: 'unmatch' | 'toggle'; matchId: string } | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [userAction, setUserAction] = useState<{ type: 'archive' | 'restore' | 'delete'; user: User } | null>(null);
+  const [userActionBusy, setUserActionBusy] = useState(false);
+
+  // A user still referenced by a match. Archiving one leaves the match pointing at a
+  // hidden account; deleting one would orphan the match entirely.
+  const isUserMatched = (userId: string) =>
+    matches.some(m => m.parentId === userId || m.nannyId === userId);
+
+  const handleArchiveUser = async (user: User, next: 'ACTIVE' | 'ARCHIVED') => {
+    setUserActionBusy(true);
+    try {
+      await updateDoc(doc(db, 'users', user.id), { status: next });
+      setUserAction(null);
+      setSelectedUser(prev => (prev && prev.id === user.id ? { ...prev, status: next } : prev));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${user.id}`);
+    } finally {
+      setUserActionBusy(false);
+    }
+  };
+
+  const handleDeleteUser = async (user: User) => {
+    // Guard again at execution time in case a match was created between opening the
+    // dialog and confirming.
+    if (isUserMatched(user.id)) {
+      setUserAction(null);
+      return;
+    }
+    setUserActionBusy(true);
+    try {
+      await deleteDoc(doc(db, 'users', user.id));
+      setUserAction(null);
+      setSelectedUser(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `users/${user.id}`);
+    } finally {
+      setUserActionBusy(false);
+    }
+  };
 
   const handleToggleMatchStatus = async (match: Match) => {
     try {
@@ -91,11 +131,24 @@ export default function AdminDashboard({ admin }: AdminDashboardProps) {
     }
   };
 
-  const filteredUsers = users.filter(u => 
-    u.name?.toLowerCase().includes(userSearchTerm.toLowerCase()) || 
-    u.email?.toLowerCase().includes(userSearchTerm.toLowerCase()) ||
-    u.role.toLowerCase().includes(userSearchTerm.toLowerCase())
-  );
+  // Emails shared by more than one record — used to flag duplicates for cleanup.
+  const emailCounts = users.reduce<Record<string, number>>((acc, u) => {
+    const key = u.email?.toLowerCase();
+    if (key) acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+  const isDuplicateEmail = (u: User) => (emailCounts[u.email?.toLowerCase()] || 0) > 1;
+
+  const filteredUsers = users.filter(u => {
+    const isArchived = u.status === 'ARCHIVED';
+    if (isArchived && !showArchived) return false;
+    const term = userSearchTerm.toLowerCase();
+    return (
+      u.name?.toLowerCase().includes(term) ||
+      u.email?.toLowerCase().includes(term) ||
+      u.role.toLowerCase().includes(term)
+    );
+  });
 
   const filteredSchedules = schedules.filter(s => {
     if (!streamSearchTerm) return true;
@@ -317,7 +370,13 @@ export default function AdminDashboard({ admin }: AdminDashboardProps) {
                  onChange={e => setUserSearchTerm(e.target.value)}
                  className="flex-1 bg-transparent border-none outline-none px-4 py-2 text-sm font-medium text-text-main placeholder-text-sub"
                />
-               <div className="px-4 py-2 bg-white rounded-lg border border-border-theme text-xs font-bold text-text-sub uppercase tracking-wider shadow-sm">
+               <button
+                 onClick={() => setShowArchived(v => !v)}
+                 className={`px-4 py-2 rounded-lg border text-xs font-bold uppercase tracking-wider shadow-sm transition-colors whitespace-nowrap ${showArchived ? 'bg-primary text-white border-primary' : 'bg-white text-text-sub border-border-theme hover:text-text-main'}`}
+               >
+                  {showArchived ? 'Hiding archived' : 'Show archived'}
+               </button>
+               <div className="px-4 py-2 bg-white rounded-lg border border-border-theme text-xs font-bold text-text-sub uppercase tracking-wider shadow-sm ml-2">
                   {filteredUsers.length} Users
                </div>
             </div>
@@ -325,8 +384,11 @@ export default function AdminDashboard({ admin }: AdminDashboardProps) {
                <div className="text-center py-12 text-sm font-bold text-text-sub">No users found matching "{userSearchTerm}".</div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {filteredUsers.map(u => (
-                  <div key={u.id} className="p-5 rounded-xl border border-border-theme hover:border-primary/30 hover:shadow-md transition-all flex flex-col justify-between space-y-4 cursor-pointer" onClick={() => setSelectedUser(u)}>
+                {filteredUsers.map(u => {
+                  const archived = u.status === 'ARCHIVED';
+                  const dup = isDuplicateEmail(u);
+                  return (
+                  <div key={u.id} className={`p-5 rounded-xl border transition-all flex flex-col justify-between space-y-4 cursor-pointer ${archived ? 'border-border-theme bg-surface opacity-60 hover:opacity-100' : 'border-border-theme hover:border-primary/30 hover:shadow-md'}`} onClick={() => setSelectedUser(u)}>
                     <div className="flex items-start justify-between">
                       <div className={`p-2 rounded-lg ${u.role === 'ADMIN' ? 'bg-error text-white shadow-sm' : u.role === 'PARENT' ? 'bg-primary text-white shadow-sm' : 'bg-success text-white shadow-sm'}`}>
                         {u.role === 'ADMIN' ? <AlertCircle className="w-5 h-5" /> : u.role === 'PARENT' ? <Users className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
@@ -334,14 +396,23 @@ export default function AdminDashboard({ admin }: AdminDashboardProps) {
                       <span className="text-[10px] font-bold text-text-sub uppercase tracking-widest">{u.role}</span>
                     </div>
                     <div>
-                      <h3 className="text-base font-bold text-text-main tracking-tight">{u.name}</h3>
+                      <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                        <h3 className="text-base font-bold text-text-main tracking-tight">{u.name}</h3>
+                        {dup && (
+                          <span className="text-[9px] font-bold text-warning bg-warning/10 px-1.5 py-0.5 rounded uppercase tracking-tight">Duplicate</span>
+                        )}
+                        {archived && (
+                          <span className="text-[9px] font-bold text-text-sub bg-border-theme/50 px-1.5 py-0.5 rounded uppercase tracking-tight">Archived</span>
+                        )}
+                      </div>
                       <p className="text-xs text-text-sub truncate">{u.email}</p>
                     </div>
                     <div className="pt-4 border-t border-border-theme flex items-center justify-end">
                       <button className="text-[10px] font-bold text-primary uppercase hover:underline">View Profile</button>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -364,17 +435,46 @@ export default function AdminDashboard({ admin }: AdminDashboardProps) {
                     <div>
                        <h2 className="text-2xl font-black text-text-main tracking-tight mb-1">{selectedUser.name}</h2>
                        <p className="text-sm text-text-sub font-medium">{selectedUser.email}</p>
-                       <div className="mt-4 flex gap-3">
+                       <div className="mt-4 flex gap-3 flex-wrap">
                           <span className="px-2 py-1 rounded text-[10px] font-bold bg-surface border border-border-theme text-text-sub uppercase tracking-widest">{selectedUser.role}</span>
+                          {selectedUser.status === 'ARCHIVED' && (
+                            <span className="px-2 py-1 rounded text-[10px] font-bold bg-border-theme/50 text-text-sub uppercase tracking-widest">Archived</span>
+                          )}
+                          {isDuplicateEmail(selectedUser) && (
+                            <span className="px-2 py-1 rounded text-[10px] font-bold bg-warning/10 text-warning uppercase tracking-widest">Duplicate email</span>
+                          )}
                        </div>
                     </div>
                  </div>
-                 <button
-                    onClick={() => openEditUser(selectedUser)}
-                    className="px-4 py-2 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary/90 transition-colors whitespace-nowrap"
-                 >
-                    Edit User
-                 </button>
+                 <div className="flex flex-col items-end gap-2 shrink-0">
+                    <button
+                       onClick={() => openEditUser(selectedUser)}
+                       className="px-4 py-2 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary/90 transition-colors whitespace-nowrap w-full"
+                    >
+                       Edit User
+                    </button>
+                    {selectedUser.status === 'ARCHIVED' ? (
+                       <button
+                          onClick={() => setUserAction({ type: 'restore', user: selectedUser })}
+                          className="px-4 py-2 border border-success/40 text-success rounded-lg text-xs font-bold hover:bg-success/5 transition-colors whitespace-nowrap w-full"
+                       >
+                          Restore
+                       </button>
+                    ) : (
+                       <button
+                          onClick={() => setUserAction({ type: 'archive', user: selectedUser })}
+                          className="px-4 py-2 border border-border-theme text-text-sub rounded-lg text-xs font-bold hover:bg-surface hover:text-text-main transition-colors whitespace-nowrap w-full flex items-center justify-center gap-1.5"
+                       >
+                          <Archive className="w-3.5 h-3.5" /> Archive
+                       </button>
+                    )}
+                    <button
+                       onClick={() => setUserAction({ type: 'delete', user: selectedUser })}
+                       className="px-4 py-2 border border-error/40 text-error rounded-lg text-xs font-bold hover:bg-error/5 transition-colors whitespace-nowrap w-full"
+                    >
+                       Delete
+                    </button>
+                 </div>
               </div>
 
               {selectedUser.role !== 'ADMIN' && (() => {
@@ -532,6 +632,65 @@ export default function AdminDashboard({ admin }: AdminDashboardProps) {
         )}
 
       <AnimatePresence>
+        {userAction && (() => {
+          const { type, user } = userAction;
+          const matched = isUserMatched(user.id);
+          const blockedDelete = type === 'delete' && matched;
+          const titles = { archive: 'Archive user', restore: 'Restore user', delete: 'Delete user' };
+          // Static classes — Tailwind can't compile interpolated class names.
+          const iconTone = type === 'delete' ? 'bg-error/10 text-error' : type === 'restore' ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning';
+          return (
+            <div className="fixed inset-0 bg-text-main/20 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="bg-white rounded-xl w-full max-w-sm overflow-hidden shadow-2xl border border-border-theme"
+              >
+                <div className="p-6 text-center">
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 ${iconTone}`}>
+                    <AlertCircle className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-lg font-bold text-text-main mb-2">{titles[type]}</h3>
+                  <p className="text-sm font-medium text-text-sub mb-2">
+                    <span className="font-bold text-text-main">{user.name}</span> · {user.email}
+                  </p>
+                  <p className="text-sm font-medium text-text-sub mb-6">
+                    {blockedDelete
+                      ? 'This user is still matched with a family. Unmatch them from the Matches tab first, then delete — otherwise the match would be orphaned.'
+                      : type === 'delete'
+                        ? 'This permanently removes the user record. This cannot be undone.'
+                        : type === 'restore'
+                          ? 'This user will become active again and reappear in lists and matching.'
+                          : matched
+                            ? 'This user is still matched with a family. Archiving hides them and blocks their sign-in, but the match still points at them — re-match the family onto the correct record afterward.'
+                            : 'Archived users are hidden from lists and matching, and cannot sign in. You can restore them anytime.'}
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setUserAction(null)}
+                      className="flex-1 px-4 py-2.5 rounded-xl border border-border-theme font-bold text-sm text-text-main hover:bg-surface transition-all active:scale-95"
+                    >
+                      Cancel
+                    </button>
+                    {!blockedDelete && (
+                      <button
+                        disabled={userActionBusy}
+                        onClick={() => {
+                          if (type === 'delete') handleDeleteUser(user);
+                          else handleArchiveUser(user, type === 'restore' ? 'ACTIVE' : 'ARCHIVED');
+                        }}
+                        className={`flex-1 px-4 py-2.5 rounded-xl font-bold text-sm text-white transition-all active:scale-95 disabled:opacity-50 ${type === 'delete' ? 'bg-error hover:bg-error/90' : type === 'restore' ? 'bg-success hover:bg-success/90' : 'bg-warning hover:bg-warning/90'}`}
+                      >
+                        {userActionBusy ? 'Working…' : titles[type]}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
         {confirmAction && (
           <div className="fixed inset-0 bg-text-main/20 backdrop-blur-sm flex items-center justify-center p-4 z-50">
             <motion.div
@@ -580,7 +739,7 @@ export default function AdminDashboard({ admin }: AdminDashboardProps) {
           </div>
         )}
         {showUserForm && (
-          <UserForm onClose={() => setShowUserForm(false)} />
+          <UserForm existingUsers={users} onClose={() => setShowUserForm(false)} />
         )}
         {showMatchForm && (
           <MatchForm users={users} onClose={() => setShowMatchForm(false)} />

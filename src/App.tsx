@@ -68,6 +68,16 @@ export default function App() {
         try {
           unsubscribeDoc = onSnapshot(doc(db, 'users', firebaseUser.uid), (userDoc) => {
              if (userDoc.exists()) {
+               const data = userDoc.data() as User;
+               // An archived account (e.g. a cleaned-up duplicate) must not be able to
+               // sign in — otherwise the person could land on the wrong record.
+               if (data.status === 'ARCHIVED') {
+                 auth.signOut();
+                 setUser(null);
+                 setLoading(false);
+                 alert('This account has been deactivated. Please contact your MomSub admin.');
+                 return;
+               }
                setUser({ id: firebaseUser.uid, ...userDoc.data() } as User);
              } else {
                // Document will be created shortly by Auth.tsx

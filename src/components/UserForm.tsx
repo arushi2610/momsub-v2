@@ -3,14 +3,15 @@ import { db } from '../lib/firebase';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { X, UserPlus, Mail, Phone, User as UserIcon } from 'lucide-react';
 import { motion } from 'motion/react';
-import { UserRole } from '../types';
+import { User, UserRole } from '../types';
 import { validateEmail } from '../lib/utils';
 
 interface UserFormProps {
   onClose: () => void;
+  existingUsers: User[];
 }
 
-export default function UserForm({ onClose }: UserFormProps) {
+export default function UserForm({ onClose, existingUsers }: UserFormProps) {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -40,9 +41,20 @@ export default function UserForm({ onClose }: UserFormProps) {
       return;
     }
 
+    const emailKey = formData.email.trim().toLowerCase();
+
+    // Refuse to create a second record for an email that already exists — the main
+    // source of duplicates. Includes archived records, so the admin restores instead
+    // of piling on another copy.
+    const clash = existingUsers.find(u => u.email?.toLowerCase() === emailKey);
+    if (clash) {
+      const archived = clash.status === 'ARCHIVED' ? ' (currently archived)' : '';
+      setError(`A user with this email already exists${archived}: ${clash.name}. Edit or restore that record instead of creating a new one.`);
+      return;
+    }
+
     setLoading(true);
     try {
-      const emailKey = formData.email.trim().toLowerCase();
       // Key the record by email, not a random id. The person has no account yet, so
       // their future login id is unknown — the email is the only stable handle, and
       // the security rules read this exact path to authorize an ADMIN sign-up.
@@ -52,7 +64,7 @@ export default function UserForm({ onClose }: UserFormProps) {
         phone: formData.phone,
         role: formData.role,
         createdAt: serverTimestamp(),
-        isActive: true
+        status: 'ACTIVE'
       });
 
       onClose();
